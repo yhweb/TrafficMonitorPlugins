@@ -34,6 +34,9 @@ private:
     static std::recursive_mutex m_mtxInstance; // 单例线程锁
 
     std::vector<LStockItem> m_displayStocks;
+    // 滚动显示：当前窗口起始股票下标 / 上次滚动时间戳
+    int m_scrollOffset;
+    ULONGLONG m_lastScrollTime;
 
 public:
     /**

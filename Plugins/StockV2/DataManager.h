@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "pch.h"
 #include <wx/sharedptr.h>
+#include <mutex>
 #include "StockDef.h"
 
 #define g_data LDataManager::Instance()
@@ -27,6 +28,10 @@ constexpr unsigned int DEFAULT_DECIMAL_PLACES = 2;
 constexpr unsigned int MAX_DECIMAL_PLACES = 10;
 // 最小小数点有效位数
 constexpr unsigned int MIN_DECIMAL_PLACES = 0;
+// 默认滚动显示每页数量
+constexpr int DEFAULT_SCROLL_PAGE_SIZE = 2;
+// 默认滚动间隔（秒）
+constexpr int DEFAULT_SCROLL_INTERVAL = 5;
 
 using namespace STOCK;
 
@@ -151,7 +156,7 @@ namespace {
         template<typename Func>
         void ForEach(Func func) const
         {
-            for (const auto&& item : data_)
+            for (const auto &item : data_)
                 func(item->first, item->second);
         }
 
@@ -184,6 +189,22 @@ public:
     void IsDisplayRightAlign(bool flag);
     bool IsPriorityDisplayChanged() const;
     void IsPriorityDisplayChanged(bool flag);
+    bool IsDisplayCost() const;
+    void IsDisplayCost(bool flag);
+    bool IsDisplayCostProfitPrice() const;
+    void IsDisplayCostProfitPrice(bool flag);
+    bool IsDisplayCostProfitPercent() const;
+    void IsDisplayCostProfitPercent(bool flag);
+    bool IsDisplayAlias() const;
+    void IsDisplayAlias(bool flag);
+    bool IsScrollEnable() const;
+    void IsScrollEnable(bool flag);
+    int ScrollPageSize() const;
+    void ScrollPageSize(int num);
+    int ScrollInterval() const;
+    void ScrollInterval(int num);
+    // 是否存在设置了成本价的股票
+    bool HasStockWithCostPrice() const;
     void KLineWH(int w, int h);
     void KLineW(int w);
     int KLineW() const;
@@ -228,6 +249,20 @@ private:
         bool isDisplayColor;
         // 是否优先显示变动
         bool isPriorityDisplayChanged;
+        // 是否显示成本价
+        bool isDisplayCost;
+        // 是否显示价差（当前价-成本价）
+        bool isDisplayCostProfitPrice;
+        // 是否显示盈亏涨跌幅
+        bool isDisplayCostProfitPercent;
+        // 是否显示别名（以股票代码代替名称）
+        bool isDisplayAlias;
+        // 是否开启滚动显示
+        bool isScrollEnable;
+        // 滚动显示每页数量
+        int scrollPageSize;
+        // 滚动间隔（秒）
+        int scrollInterval;
         int klineW;
         int klineH;
         // 小数点位数
@@ -244,6 +279,11 @@ private:
     bool m_isDisplayRightAlign;
 
     LStockCacheManager m_stock_cache;
+    // 保护 m_stock_cache（wxVector + 哈希索引）与 m_stockConfig.datas 的互斥锁。
+    // 两者会被 UI 线程（增删改/遍历）、实时刷新工作线程（HandleStockRealtimeData/GetAllCodes）、
+    // socket 工作线程（GetStockByCode）并发访问；insert/remove/move_to 会重建哈希索引，
+    // 与并发 find/遍历竞争会损坏哈希表。
+    mutable std::recursive_mutex m_mtxData;
     //wxVector<wxSharedPtr<LStockData>> m_cacheStocks;
     //StockDataMap m_cacheStockMap;
 };

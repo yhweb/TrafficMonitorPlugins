@@ -19,6 +19,7 @@ private:
     void InitUI();
     void LoadOptions();
     void BindAllEvents();
+    void UpdateCostDisplayEnable();
     void OnAddStock(wxCommandEvent &);
     void OnDeleteSel(wxCommandEvent &);
     void OnBatchClear(wxCommandEvent &);
@@ -32,6 +33,8 @@ private:
     void OnMenuSelect(wxCommandEvent &e);
     void OnClose(wxCloseEvent& event);
     void OnStockListItemActivated(wxDataViewEvent& event);
+    void OnStockListItemValueChanged(wxDataViewEvent& event);
+    void OnStockListItemEditingStarted(wxDataViewEvent& event);
 
 private:
     wxVector<wxSharedPtr<STOCK::LStockData>> m_stock_datas;
@@ -62,6 +65,19 @@ private:
     // 优先显示变动价格
     wxCheckBox* m_priorityDisplayChangedCheck;
     wxCheckBox* m_isDisplayStockNameCheck;
+    // 成本价显示相关
+    wxCheckBox* m_isDisplayCostCheck;
+    wxCheckBox* m_isDisplayCostProfitPriceCheck;
+    wxCheckBox* m_isDisplayCostProfitPercentCheck;
+    wxCheckBox* m_isDisplayAliasCheck;
+    // 滚动显示相关
+    wxCheckBox* m_isScrollEnableCheck;
+    wxSpinCtrl* m_scrollPageSizeSpin;
+    wxSpinCtrl* m_scrollIntervalSpin;
+    // 打开对话框时的滚动配置（用于判断是否需要提示重启）
+    bool m_initialScrollEnable;
+    int m_initialScrollPageSize;
+    int m_initialScrollInterval;
     //wxCheckBox *m_autoUpdateCheck;
     //wxCheckBox *m_alertCheck;
 

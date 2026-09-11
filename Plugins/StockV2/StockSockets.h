@@ -237,6 +237,11 @@ private:
     // 标记WSA是否初始化
     BOOL m_bWsaInit;
 
+    // 引用计数：多少个弹窗（LStockView）正在使用本 server。
+    // 解决多弹窗共享单例 server 时，关闭一个弹窗就停掉整个 server、破坏其他弹窗连接的问题。
+    int m_refCount;
+    CRITICAL_SECTION m_csRef; // 保护 m_refCount
+
     LSocketBridge *m_bridge;
 
     // 多客户端管理
@@ -306,13 +311,14 @@ namespace
 
     private:
         std::map<std::string, BridgeCallFunc> m_callFuncs;
+        std::map<std::string, int> m_callRefs; // 回调引用计数：同名回调可被多个弹窗注册
         CRITICAL_SECTION m_csCall;
 
         std::map<std::string, ConstSharedClientTask> m_callbacks;
         CRITICAL_SECTION m_csCB;
 
     public:
-        // 注册回调函数
+        // 注册回调函数（同名回调重复注册会增加引用计数，函数体以最后一次注册为准）
         void RegisterCallFunc(const std::string &callName, BridgeCallFunc func)
         {
             if (callName.empty() || !func)
@@ -320,14 +326,23 @@ namespace
 
             EnterCriticalSection(&m_csCall);
             m_callFuncs[callName] = std::move(func);
+            m_callRefs[callName]++;
             LeaveCriticalSection(&m_csCall);
         }
 
-        // 移除回调
+        // 移除回调（引用计数归零时才真正删除，避免关闭一个弹窗就注销掉共享回调）
         void UnregisterCallFunc(const std::string &callName)
         {
             EnterCriticalSection(&m_csCall);
-            m_callFuncs.erase(callName);
+            auto it = m_callRefs.find(callName);
+            if (it != m_callRefs.end())
+            {
+                if (--it->second <= 0)
+                {
+                    m_callRefs.erase(it);
+                    m_callFuncs.erase(callName);
+                }
+            }
             LeaveCriticalSection(&m_csCall);
         }
 

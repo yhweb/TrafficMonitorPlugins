@@ -129,7 +129,12 @@ namespace STOCK
      */
     void LStockData::LoadByRealtimeData(const wxString &code, const wxString &raw_data)
     {
-        this->code = code;
+        // 该函数运行在「实时刷新工作线程」，写入 name/code/price/changePrice/changeFluctuation 等，
+        // 需与 UI 线程读取加锁互斥，避免 wxString 写时复制竞争导致堆损坏
+        std::lock_guard<std::recursive_mutex> lock(m_mtx);
+
+        // this->code 在 LoadByConfig/LoadBySearchData 时已确定（且作为缓存 key），
+        // 此处无需重复赋值，避免工作线程对 wxString 的 code 做写时复制与 UI 读取竞争
         this->name = code + ": " + UtilResHlp.StringRes(IDS_LOADING);
 
         wxArrayString latest_data_arr = UtilStringHlp::split(raw_data, ",");
@@ -196,10 +201,33 @@ namespace STOCK
         default:
             break;
         }
+
+        // 计算相对成本价的盈亏（设置了成本价时）
+        UpdateCostProfit();
+    }
+
+    void LStockData::UpdateCostProfit()
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mtx);
+        if (costPrice > 0.0)
+        {
+            // 卖空时盈亏方向相反：利润 = 成本价 - 当前价
+            wxString n1 = isShort ? wxString::FromDouble(costPrice) : wxString::FromDouble(price);
+            wxString n2 = isShort ? wxString::FromDouble(price) : wxString::FromDouble(costPrice);
+            auto profit = difference(n1, n2, decimals);
+            costProfitPrice = std::get<0>(profit);
+            costProfitPercent = std::get<1>(profit);
+        }
+        else
+        {
+            costProfitPrice = wxEmptyString;
+            costProfitPercent = wxEmptyString;
+        }
     }
 
     void LStockData::LoadBySearchData(const wxString &raw_data)
     {
+        std::lock_guard<std::recursive_mutex> lock(m_mtx);
         wxArrayString codes = CommonUtils::StringHelper::split(raw_data, ",");
 
         type = codes[1];
@@ -539,18 +567,40 @@ namespace STOCK
 
     void LStockData::NffuturesObj(wxString p170, wxArrayString v217)
     {
-        // 股票名称
-        this->name = v217[0];
+        // 国内期货实时行情有两套字段布局（新浪同一接口返回，按品种所属交易所区分）：
+        //  1) 上期所/大商所/郑商所/能源中心（如 nf_RB0）：44 段
+        //     [0]=名称 [1]=时间 [2]=开 [3]=高 [4]=低 [8]=最新 [10]=昨结 [15]=交易所 [17]=日期
+        //  2) 中金所（如 nf_IF0 / CFF_RE_IF0）：50 段
+        //     [0]=开 [1]=高 [2]=低 [3]=最新 [4]=成交量 [14]=昨结 [36]=日期 [49]=名称
+        // 之前只按布局 1 取值，导致中金所品种价格取到 0、名称取到数字
+        if (v217.GetCount() < 15)
+        {
+            wxLogDebug("NffuturesObj data invalid, fields: %d", (int)v217.GetCount());
+            this->name = UtilResHlp.StringRes(IDS_LOAD_FAIL);
+            return;
+        }
+
+        const bool isCff = v217.GetCount() > 44;
+
+        const int iName = isCff ? (int)v217.GetCount() - 1 : 0;
+        const int iOpen = isCff ? 0 : 2;
+        const int iHigh = isCff ? 1 : 3;
+        const int iLow = isCff ? 2 : 4;
+        const int iPrice = isCff ? 3 : 8;
+        const int iPrevClose = isCff ? 14 : 10;
+
+        // 品种名称
+        this->name = v217[iName];
         if (this->name.empty())
         {
             this->name = UtilResHlp.StringRes(IDS_LOAD_FAIL);
         }
 
-        open = UtilStringHlp::toFixed(v217[2], this->decimals);
-        prevclose = UtilStringHlp::toFixed(v217[10], this->decimals);
-        price = UtilStringHlp::toFixed(v217[8], this->decimals);
-        high = UtilStringHlp::toFixed(v217[3], this->decimals);
-        low = UtilStringHlp::toFixed(v217[4], this->decimals);
+        open = UtilStringHlp::toFixed(v217[iOpen], this->decimals);
+        prevclose = UtilStringHlp::toFixed(v217[iPrevClose], this->decimals);
+        price = UtilStringHlp::toFixed(v217[iPrice], this->decimals);
+        high = UtilStringHlp::toFixed(v217[iHigh], this->decimals);
+        low = UtilStringHlp::toFixed(v217[iLow], this->decimals);
 
         // totalVolume: UtilStringHlp::parseInt(v217[14]) || "--",
         totalVolume_i = NAN;
@@ -561,7 +611,7 @@ namespace STOCK
 
         priceLimit = max(upperLimit, lowerLimit);
 
-        auto vS1 = difference(v217[8], v217[10], this->decimals);
+        auto vS1 = difference(v217[iPrice], v217[iPrevClose], this->decimals);
         wxString v213 = std::get<0>(vS1);
         wxString v212 = std::get<1>(vS1);
 
@@ -1166,6 +1216,11 @@ namespace STOCK
         {
             return GetMarketType::GetMarketType_NF;
         }
+        else if (code.StartsWith(wxT("CFF_RE_")))
+        {
+            // 中金所（股指/国债期货），实时行情布局与 nf_ 一致，共用 NffuturesObj
+            return GetMarketType::GetMarketType_NF;
+        }
         else if (code.StartsWith(wxT("si")))
         {
             return GetMarketType::GetMarketType_SI;
@@ -1262,6 +1317,7 @@ namespace STOCK
 
     bool LStockData::LoadByConfig(const wxString &raw_data)
     {
+        std::lock_guard<std::recursive_mutex> lock(m_mtx);
         wxArrayString cfg = UtilStringHlp::split(raw_data, ",");
         if (cfg.empty() || cfg.size() < 4)
         {
@@ -1283,6 +1339,13 @@ namespace STOCK
             copy_decimals.Replace(CFG_REPLACE_STR, ",");
         }
 
+        wxString copy_costprice = wxEmptyString;
+        if (cfg.size() > 5)
+        {
+            copy_costprice = cfg[5];
+            copy_costprice.Replace(CFG_REPLACE_STR, ",");
+        }
+
         code = copy_code;
         name = copy_name;
         type = copy_type;
@@ -1302,11 +1365,28 @@ namespace STOCK
                 decimals = DEFAULT_DECIMAL_PLACES;
             }
         }
+
+        costPrice = 0.0;
+        if (!copy_costprice.empty())
+        {
+            double price = UtilStringHlp::parseDouble(copy_costprice);
+            if (UtilStringHlp::isValidNum(price) && price >= 0.0)
+            {
+                costPrice = price;
+            }
+        }
+
+        isShort = false;
+        if (cfg.size() > 6)
+        {
+            isShort = (cfg[6] == "1") && IsShortable(); // 仅期货允许做空
+        }
         return true;
     }
 
     wxString LStockData::ToConfig() const
     {
+        std::lock_guard<std::recursive_mutex> lock(m_mtx);
         wxString copy_code = wxString(code);
         copy_code.Replace(",", CFG_REPLACE_STR, true);
         wxString copy_name = wxString(name);
@@ -1322,11 +1402,17 @@ namespace STOCK
         cfg.push_back(copy_type);
         cfg.push_back(copy_url);
         cfg.push_back(copy_decimals);
+        cfg.push_back(UtilStringHlp::toFixed(costPrice, 6));
+        cfg.push_back(isShort ? "1" : "0");
         return UtilStringHlp::vectorJoinString(cfg, ",");
     }
 
         wxString LStockData::GetBridgData(LStockPeriodType type) const
     {
+        // 该函数运行在 socket 工作线程，读取 period_raw_data_map 与 open/prevclose/price，
+        // 需与实时刷新线程、其他 socket 工作线程加锁互斥
+        std::lock_guard<std::recursive_mutex> lock(m_mtx);
+
         auto pointRawDataIt = period_raw_data_map.find(type);
         if (pointRawDataIt == period_raw_data_map.end())
         {
@@ -1413,6 +1499,10 @@ namespace STOCK
             break;
         case MarketType::MarketType_NF:
             // nf: undefined,
+            // 国内期货（含中金所）刻意不给 start/end：
+            // 交易时段横跨夜盘+日盘（21:00~次日02:30 + 09:00~15:00，且各品种夜盘时长不同），
+            // 前端 time_range 只支持单个 break，无法表达。留空后前端改用数据自带的分钟时间戳绘制，
+            // 并由 ECharts 依据数据自动计算 x 轴 min/max
             break;
         case MarketType::MarketType_GOODS:
             // goods: [["20:00", "23:59"], ["00:00", "02:29"], ["09:00", "15:30"]],
@@ -1434,6 +1524,8 @@ namespace STOCK
         case MarketType::MarketType_forex_yt:
             break;
         case MarketType::MarketType_CFF:
+            // 与 NF 相同：中金所时段为 09:30~11:30 / 13:00~15:00，
+            // 但同一前端渲染逻辑下保持留空，由数据时间戳驱动
             break;
         case MarketType::MarketType_MSCI:
             // msci: [["07:00", "23:59"], ["00:00", "06:00"]],
@@ -1457,6 +1549,9 @@ namespace STOCK
         yyjson_mut_obj_add_real(doc, newestObj, "price", this->price);
         yyjson_mut_obj_add_real(doc, newestObj, "high", this->high);
         yyjson_mut_obj_add_real(doc, newestObj, "low", this->low);
+        // 成本价（0 = 未设置 / 未开启显示），供弹窗分时图绘制黄色虚线成本线
+        // 本函数开头已持 m_mtx 锁，此处直接读是安全的
+        yyjson_mut_obj_add_real(doc, newestObj, "costPrice", this->costPrice);
 
         yyjson_mut_obj_add_val(doc, root, "time_range", timeRangeObj);
         yyjson_mut_obj_add_val(doc, root, "newest", newestObj);
@@ -1667,10 +1762,16 @@ namespace STOCK
             variant = data->GetDisplayMarket();
             break;
         case Col_NameText:
-            variant = data->name;
+            variant = data->GetName();
             break;
         case Col_CodeText:
-            variant = data->code;
+            variant = data->GetCode();
+            break;
+        case Col_CostPriceText:
+            variant = data->GetCostPriceText();
+            break;
+        case Col_DirectionText:
+            variant = data->isShort ? wxString("卖空") : wxString("买多");
             break;
         case Col_DecimalsText:
             variant = (long)data->decimals;
@@ -1691,6 +1792,25 @@ namespace STOCK
         case Col_CodeText:
             attr.SetColour(wxColour(*wxBLACK));
             return true;
+        case Col_CostPriceText:
+            attr.SetColour(wxColour(*wxBLACK));
+            return true;
+        case Col_DirectionText:
+        {
+            if (row < m_row_data.size())
+            {
+                auto data = m_row_data[row];
+                if (data && !data->IsShortable())
+                {
+                    attr.SetColour(wxColour(*wxLIGHT_GREY)); // 股票不可做空，置灰
+                }
+                else
+                {
+                    attr.SetColour(wxColour(*wxBLACK));
+                }
+            }
+            return true;
+        }
         case Col_DecimalsText:
             attr.SetColour(wxColour(*wxBLACK));
             break;
@@ -1709,6 +1829,7 @@ namespace STOCK
         switch (col)
         {
         case Col_DecimalsText:
+        {
             long val = variant.GetLong();
             if (val > MAX_DECIMAL_PLACES || val < MIN_DECIMAL_PLACES)
             {
@@ -1716,6 +1837,49 @@ namespace STOCK
             }
             data->decimals = val;
             return true;
+        }
+        case Col_CostPriceText:
+        {
+            wxString str = variant.GetString();
+            str.Trim();
+            str.Trim(false);
+            if (str.empty() || str == "0" || str == "0.0")
+            {
+                data->costPrice = 0.0;
+                data->UpdateCostProfit();
+                return true;
+            }
+            double price = UtilStringHlp::parseDouble(str);
+            if (!UtilStringHlp::isValidNum(price) || price < 0.0)
+            {
+                return false;
+            }
+            data->costPrice = price;
+            data->UpdateCostProfit();
+            return true;
+        }
+        case Col_DirectionText:
+        {
+            if (!data->IsShortable())
+            {
+                return false; // 股票不支持做空，禁止修改方向
+            }
+            wxString str = variant.GetString();
+            if (str == "卖空")
+            {
+                data->isShort = true;
+            }
+            else if (str == "买多")
+            {
+                data->isShort = false;
+            }
+            else
+            {
+                return false;
+            }
+            data->UpdateCostProfit();
+            return true;
+        }
         }
         return false;
     }

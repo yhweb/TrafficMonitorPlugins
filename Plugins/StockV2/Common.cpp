@@ -652,6 +652,13 @@ namespace CommonUtils
         try
         {
             pSession = new CInternetSession(user_agent);
+            // 设置超时，避免在弱网/无网环境下无限阻塞。
+            // 该函数运行在 socket 工作线程中，若无限阻塞会耗尽 4 个工作线程，
+            // 导致 JS 每 5 秒的轮询请求在队列中堆积，关闭弹窗时还可能触发工作线程 use-after-free。
+            DWORD dwTimeout = 8000; // 8 秒
+            pSession->SetOption(INTERNET_OPTION_CONNECT_TIMEOUT, dwTimeout);
+            pSession->SetOption(INTERNET_OPTION_RECEIVE_TIMEOUT, dwTimeout);
+            pSession->SetOption(INTERNET_OPTION_SEND_TIMEOUT, dwTimeout);
             pfile = (CHttpFile *)pSession->OpenURL(url.c_str(), 1, INTERNET_FLAG_TRANSFER_ASCII, headers, dwHeadersLength);
             DWORD dwStatusCode;
             pfile->QueryInfoStatusCode(dwStatusCode);

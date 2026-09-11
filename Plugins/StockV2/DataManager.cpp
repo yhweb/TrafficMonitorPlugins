@@ -24,6 +24,13 @@ namespace
     static const auto KEY_CFG_DISPLAY_COLOR = "/stock/is_display_color";
     static const auto KEY_CFG_DISPLAY_NAME = "/stock/is_display_name";
     static const auto KEY_CFG_PRIORITY_DISPLAY_CHANGE = "/stock/is_priority_display_changed";
+    static const auto KEY_CFG_DISPLAY_COST = "/stock/is_display_cost";
+    static const auto KEY_CFG_DISPLAY_COST_PROFIT_PRICE = "/stock/is_display_cost_profit_price";
+    static const auto KEY_CFG_DISPLAY_COST_PROFIT_PERCENT = "/stock/is_display_cost_profit_percent";
+    static const auto KEY_CFG_DISPLAY_ALIAS = "/stock/is_display_alias";
+    static const auto KEY_CFG_SCROLL_ENABLE = "/stock/is_scroll_enable";
+    static const auto KEY_CFG_SCROLL_PAGE_SIZE = "/stock/scroll_page_size";
+    static const auto KEY_CFG_SCROLL_INTERVAL = "/stock/scroll_interval";
     static const auto KEY_CFG_KLINE_SIZE_W = "/stock/kline/size/w";
     static const auto KEY_CFG_KLINE_SIZE_H = "/stock/kline/size/h";
 
@@ -138,6 +145,7 @@ const wxString LDataManager::GetModuleName()
 
 const wxArrayString LDataManager::GetAllCodes()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     wxArrayString all_codes;
     for (const auto &data : m_stockConfig.datas)
     {
@@ -199,6 +207,91 @@ bool LDataManager::IsPriorityDisplayChanged() const
     return m_stockConfig.isPriorityDisplayChanged;
 }
 
+void LDataManager::IsDisplayCost(bool flag)
+{
+    m_stockConfig.isDisplayCost = flag;
+}
+
+bool LDataManager::IsDisplayCost() const
+{
+    return m_stockConfig.isDisplayCost;
+}
+
+void LDataManager::IsDisplayCostProfitPrice(bool flag)
+{
+    m_stockConfig.isDisplayCostProfitPrice = flag;
+}
+
+bool LDataManager::IsDisplayCostProfitPrice() const
+{
+    return m_stockConfig.isDisplayCostProfitPrice;
+}
+
+void LDataManager::IsDisplayCostProfitPercent(bool flag)
+{
+    m_stockConfig.isDisplayCostProfitPercent = flag;
+}
+
+bool LDataManager::IsDisplayCostProfitPercent() const
+{
+    return m_stockConfig.isDisplayCostProfitPercent;
+}
+
+void LDataManager::IsDisplayAlias(bool flag)
+{
+    m_stockConfig.isDisplayAlias = flag;
+}
+
+bool LDataManager::IsDisplayAlias() const
+{
+    return m_stockConfig.isDisplayAlias;
+}
+
+void LDataManager::IsScrollEnable(bool flag)
+{
+    m_stockConfig.isScrollEnable = flag;
+}
+
+bool LDataManager::IsScrollEnable() const
+{
+    return m_stockConfig.isScrollEnable;
+}
+
+void LDataManager::ScrollPageSize(int num)
+{
+    m_stockConfig.scrollPageSize = num;
+}
+
+int LDataManager::ScrollPageSize() const
+{
+    return m_stockConfig.scrollPageSize;
+}
+
+void LDataManager::ScrollInterval(int num)
+{
+    m_stockConfig.scrollInterval = num;
+}
+
+int LDataManager::ScrollInterval() const
+{
+    return m_stockConfig.scrollInterval;
+}
+
+bool LDataManager::HasStockWithCostPrice() const
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
+    bool has = false;
+    m_stock_cache.ForEach(
+        [&has](const wxString &code, StockDataPtr stock)
+        {
+            if (stock && stock->costPrice > 0.0)
+            {
+                has = true;
+            }
+        });
+    return has;
+}
+
 void LDataManager::KLineWH(int w, int h)
 {
     m_stockConfig.klineW = w;
@@ -242,6 +335,7 @@ void LDataManager::DecimalPlaces(int num)
 
 void LDataManager::InitConfig()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     wxConfigBase *pConfig = wxConfigBase::Get();
 
     wxString all_stock_datas = pConfig->Read(KEY_CFG_ALL_STOCK_DATA);
@@ -280,6 +374,13 @@ void LDataManager::InitConfig()
     m_stockConfig.isDisplayColor = pConfig->ReadBool(KEY_CFG_DISPLAY_COLOR, true);
     m_stockConfig.isDisplayName = pConfig->ReadBool(KEY_CFG_DISPLAY_NAME, true);
     m_stockConfig.isPriorityDisplayChanged = pConfig->ReadBool(KEY_CFG_PRIORITY_DISPLAY_CHANGE, false);
+    m_stockConfig.isDisplayCost = pConfig->ReadBool(KEY_CFG_DISPLAY_COST, true);
+    m_stockConfig.isDisplayCostProfitPrice = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, true);
+    m_stockConfig.isDisplayCostProfitPercent = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, true);
+    m_stockConfig.isDisplayAlias = pConfig->ReadBool(KEY_CFG_DISPLAY_ALIAS, false);
+    m_stockConfig.isScrollEnable = pConfig->ReadBool(KEY_CFG_SCROLL_ENABLE, false);
+    m_stockConfig.scrollPageSize = pConfig->Read(KEY_CFG_SCROLL_PAGE_SIZE, DEFAULT_SCROLL_PAGE_SIZE);
+    m_stockConfig.scrollInterval = pConfig->Read(KEY_CFG_SCROLL_INTERVAL, DEFAULT_SCROLL_INTERVAL);
 
     m_stockConfig.klineW = pConfig->Read(KEY_CFG_KLINE_SIZE_W, DEFAULT_KLINE_VIEW_W);
     m_stockConfig.klineH = pConfig->Read(KEY_CFG_KLINE_SIZE_H, DEFAULT_KLINE_VIEW_H);
@@ -307,12 +408,20 @@ void LDataManager::ReLoadConfig()
     m_stockConfig.isDisplayColor = pConfig->ReadBool(KEY_CFG_DISPLAY_COLOR, true);
     m_stockConfig.isDisplayName = pConfig->ReadBool(KEY_CFG_DISPLAY_NAME, true);
     m_stockConfig.isPriorityDisplayChanged = pConfig->ReadBool(KEY_CFG_PRIORITY_DISPLAY_CHANGE, false);
+    m_stockConfig.isDisplayCost = pConfig->ReadBool(KEY_CFG_DISPLAY_COST, true);
+    m_stockConfig.isDisplayCostProfitPrice = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, true);
+    m_stockConfig.isDisplayCostProfitPercent = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, true);
+    m_stockConfig.isDisplayAlias = pConfig->ReadBool(KEY_CFG_DISPLAY_ALIAS, false);
+    m_stockConfig.isScrollEnable = pConfig->ReadBool(KEY_CFG_SCROLL_ENABLE, false);
+    m_stockConfig.scrollPageSize = pConfig->Read(KEY_CFG_SCROLL_PAGE_SIZE, DEFAULT_SCROLL_PAGE_SIZE);
+    m_stockConfig.scrollInterval = pConfig->Read(KEY_CFG_SCROLL_INTERVAL, DEFAULT_SCROLL_INTERVAL);
     m_stockConfig.klineW = pConfig->Read(KEY_CFG_KLINE_SIZE_W, DEFAULT_KLINE_VIEW_W);
     m_stockConfig.klineH = pConfig->Read(KEY_CFG_KLINE_SIZE_H, DEFAULT_KLINE_VIEW_H);
 }
 
 void LDataManager::ReLoadAllStocks()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     m_stock_cache.clear();
     for (auto &&data : m_stockConfig.datas)
     {
@@ -326,17 +435,26 @@ void LDataManager::ReLoadAllStocks()
 
 bool LDataManager::IsChangeStockList()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     return AllStocks().size() != m_stockConfig.datas.size();
 }
 
 void LDataManager::SaveConfig()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     wxConfigBase *pConfig = wxConfigBase::Get();
 
     pConfig->Write(KEY_CFG_REALTIME_REFRESH_FREQ, m_stockConfig.realtimeRefreshFreq);
     pConfig->Write(KEY_CFG_DISPLAY_COLOR, m_stockConfig.isDisplayColor);
     pConfig->Write(KEY_CFG_PRIORITY_DISPLAY_CHANGE, m_stockConfig.isPriorityDisplayChanged);
     pConfig->Write(KEY_CFG_DISPLAY_NAME, m_stockConfig.isDisplayName);
+    pConfig->Write(KEY_CFG_DISPLAY_COST, m_stockConfig.isDisplayCost);
+    pConfig->Write(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, m_stockConfig.isDisplayCostProfitPrice);
+    pConfig->Write(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, m_stockConfig.isDisplayCostProfitPercent);
+    pConfig->Write(KEY_CFG_DISPLAY_ALIAS, m_stockConfig.isDisplayAlias);
+    pConfig->Write(KEY_CFG_SCROLL_ENABLE, m_stockConfig.isScrollEnable);
+    pConfig->Write(KEY_CFG_SCROLL_PAGE_SIZE, m_stockConfig.scrollPageSize);
+    pConfig->Write(KEY_CFG_SCROLL_INTERVAL, m_stockConfig.scrollInterval);
 
     pConfig->Write(KEY_CFG_KLINE_SIZE_W, m_stockConfig.klineW);
     pConfig->Write(KEY_CFG_KLINE_SIZE_H, m_stockConfig.klineH);
@@ -361,6 +479,7 @@ void LDataManager::SaveConfig()
 
 void LDataManager::AddStock(StockDataPtr data)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     if (data && !data->code.empty())
     {
         m_stock_cache.insert(data);
@@ -369,11 +488,13 @@ void LDataManager::AddStock(StockDataPtr data)
 
 void LDataManager::ClearAllCodes()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     m_stock_cache.clear();
 }
 
 wxVector<StockDataPtr> LDataManager::AllStocks()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     wxVector<StockDataPtr> datas;
 
     m_stock_cache.ForEach(
@@ -390,6 +511,7 @@ wxVector<StockDataPtr> LDataManager::AllStocks()
 
 StockDataPtr LDataManager::GetStockByCode(const wxString &code)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     auto it = m_stock_cache.find(code);
     if (!it)
     {
@@ -400,6 +522,7 @@ StockDataPtr LDataManager::GetStockByCode(const wxString &code)
 
 StockDataPtr LDataManager::GetStockByIndex(WXUINT index)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     auto it = m_stock_cache.indexAt(index);
     if (!it)
     {
@@ -410,16 +533,19 @@ StockDataPtr LDataManager::GetStockByIndex(WXUINT index)
 
 bool LDataManager::DeleteStockByCode(const wxString &code)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     return m_stock_cache.remove(code);
 }
 
 bool LDataManager::SetStockPosition(const StockDataPtr ptr, size_t pos)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     return m_stock_cache.move_to(ptr->code, pos);
 }
 
 bool LDataManager::HandleStockRealtimeData(wxString jsonp)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     if (jsonp.empty())
     {
         LLOG_WARN_F("HandleStockRealtimeData data EMPTY!");
@@ -468,10 +594,18 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
 {
     wxLogDebug("OnRefreshStockTimelineData: %s", data.c_str());
 
+    // 注意：本函数所有提前返回的分支都必须回调一次空响应，
+    // 否则 JS 侧的 loading 状态永远不会结束（弹窗一直显示「加载中」）
+    auto replyEmpty = [&callback_id]()
+    {
+        LStockServerSocket::GetInstance().GetBridge()->BridgeSendDataWithCallback(callback_id, "{}");
+    };
+
     yyjson_doc *doc = yyjson_read(data.c_str(), data.size(), 0);
     if (doc == nullptr)
     {
         wxLogDebug("OnRefreshStockTimelineData: json parse error!");
+        replyEmpty();
         return;
     }
     yyjson_val *root = yyjson_doc_get_root(doc);
@@ -479,6 +613,7 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
     {
         wxLogDebug("OnRefreshStockTimelineData: root");
         yyjson_doc_free(doc);
+        replyEmpty();
         return;
     }
 
@@ -490,6 +625,7 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
     default:
         wxLogDebug("OnRefreshStockTimelineData: not support %d", type);
         yyjson_doc_free(doc);
+        replyEmpty();
         return;
     }
 
@@ -746,6 +882,19 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
                 //         T5_URL: "http://stock2.finance.sina.com.cn/futures/api/jsonp.php/$cb=/InnerFuturesNewService.getFourDaysLine?symbol=$symbol",
                 //         TRADING_DATES_URL: c
                 //     },
+                // 国内期货（上期所/大商所/郑商所/中金所/能源中心）。
+                // 与 US 分支同理：jsonp 回调名必须写进 path（$cb 在 path 上，不能用 ?callback=），
+                // 且 symbol 必须去掉 nf_ 前缀 —— 否则接口返回 var t1=(null)
+                {
+                    wxString symbol = UtilStringHlp::remove(stock->code, "nf_");
+                    url_prefix = wxT("https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1") + symbol + wxT("=/InnerFuturesNewService.getMinLine?");
+
+                    params.push_back(L"symbol=" + symbol);
+
+                    // /*<script>location.href='//sina.com';</script>*/
+                    // var t1=([["21:00","3107.000","3106.825","18220","1598337","3108.000","2026-09-14"],["21:01",...],...]);
+                    // 每行: [时间, 价格, 均价, 分钟量, 累计量, 首行额外字段..., 日期]
+                }
                 break;
             case MarketType::MarketType_GOODS:
                 //     GOODS: {
@@ -794,6 +943,14 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
                 //         T5_URL: "http://stock2.finance.sina.com.cn/futures/api/jsonp.php/$cb=/InnerFuturesNewService.getFourDaysLine?symbol=$symbol",
                 //         TRADING_DATES_URL: c
                 //     },
+                // 中金所（CFF_RE_XXX，如 CFF_RE_IF0）。接口与 NF 完全一致，
+                // 只是 code 前缀换成 CFF_RE_，symbol 同样要去前缀（CFF_RE_IF0 -> IF0）
+                {
+                    wxString symbol = UtilStringHlp::remove(stock->code, "CFF_RE_");
+                    url_prefix = wxT("https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1") + symbol + wxT("=/InnerFuturesNewService.getMinLine?");
+
+                    params.push_back(L"symbol=" + symbol);
+                }
                 break;
             case MarketType::MarketType_MSCI:
                 //     MSCI: {
@@ -808,7 +965,11 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
 
             if (url_prefix.empty())
             {
-                LLOG_WARN_F("not support");
+                // 该市场尚未配置分时接口。这里必须回一次空响应：
+                // JS 侧只有 native_response 会把 loading 标志置回 false，
+                // 静默 return 会让弹窗永远停在「加载中」
+                LLOG_WARN_F("OnRefreshStockTimelineData not support market: %s", code.c_str());
+                LStockServerSocket::GetInstance().GetBridge()->BridgeSendDataWithCallback(callback_id, "{}");
                 return;
             }
 
@@ -824,6 +985,12 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
 
                 LStockServerSocket::GetInstance().GetBridge()->BridgeSendDataWithCallback(callback_id, stock->GetBridgData(type).ToStdString());
             }
+            else
+            {
+                // 接口拉取失败也必须回调，否则同样会卡在「加载中」
+                LLOG_WARN_F("OnRefreshStockTimelineData GetURL failed: %s", url.ToUTF8().data());
+                replyEmpty();
+            }
         }
         else
         {
@@ -832,7 +999,8 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
     }
     else
     {
-        wxLogDebug("OnRefreshStockTimelineData: not found stock %s", code);
+        wxLogDebug("OnRefreshStockTimelineData: not found stock %s", code.c_str());
+        replyEmpty();
     }
 
     yyjson_doc_free(doc);
