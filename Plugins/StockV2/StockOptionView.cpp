@@ -54,6 +54,11 @@ LStockOptionView::LStockOptionView(const wxString &title, const wxPoint &pos, co
     ::SetForegroundWindow((HWND)this->GetHandle());
 #endif
 
+    // 记录初始滚动配置，用于关闭时判断是否需要提示重启
+    m_initialScrollEnable = g_data.IsScrollEnable();
+    m_initialScrollPageSize = g_data.ScrollPageSize();
+    m_initialScrollInterval = g_data.ScrollInterval();
+
     LoadOptions();
 }
 
@@ -123,6 +128,29 @@ void LStockOptionView::InitUI()
         wxALIGN_NOT,
         col_flag);
     colCode->GetRenderer()->SetAlignment(alignment);
+
+    wxDataViewColumn *const colCostPrice = m_stockListCtrl->AppendTextColumn(
+        "成本价",
+        STOCK::LStockListVM::Col_CostPriceText,
+        wxDATAVIEW_CELL_EDITABLE,
+        FromDIP(100),
+        wxALIGN_RIGHT,
+        col_flag);
+    colCostPrice->GetRenderer()->SetAlignment(wxALIGN_RIGHT & wxALIGN_MASK);
+
+    // 买卖方向（买多/卖空），仅期货可编辑，股票置灰禁止设置
+    wxArrayString directionChoices;
+    directionChoices.Add("买多");
+    directionChoices.Add("卖空");
+    wxDataViewChoiceRenderer *directionRenderer = new wxDataViewChoiceRenderer(directionChoices, wxDATAVIEW_CELL_EDITABLE, wxALIGN_CENTER);
+    wxDataViewColumn *colDirection = new wxDataViewColumn(
+        "方向",
+        directionRenderer,
+        STOCK::LStockListVM::Col_DirectionText,
+        FromDIP(70),
+        wxALIGN_CENTER,
+        col_flag);
+    m_stockListCtrl->AppendColumn(colDirection);
 
     stockBoxSizer->Add(m_stockListCtrl, 1, wxEXPAND);
 
@@ -207,6 +235,35 @@ void LStockOptionView::InitUI()
 
     settingsBoxSizer->AddSpacer(8);
 
+    // 成本价显示勾选（未设置成本价时默认禁用）
+    wxBoxSizer *costOptSizer = new wxBoxSizer(wxHORIZONTAL);
+    m_isDisplayCostCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示成本");
+    m_isDisplayCostProfitPriceCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示价差");
+    m_isDisplayCostProfitPercentCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示涨跌幅");
+    m_isDisplayAliasCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示别名");
+    costOptSizer->Add(m_isDisplayCostCheck, 0);
+    costOptSizer->Add(m_isDisplayCostProfitPriceCheck, 0, wxLEFT, 15);
+    costOptSizer->Add(m_isDisplayCostProfitPercentCheck, 0, wxLEFT, 15);
+    costOptSizer->Add(m_isDisplayAliasCheck, 0, wxLEFT, 15);
+    settingsBoxSizer->Add(costOptSizer, 0);
+
+    settingsBoxSizer->AddSpacer(8);
+
+    // 滚动显示
+    wxBoxSizer *scrollOptSizer = new wxBoxSizer(wxHORIZONTAL);
+    m_isScrollEnableCheck = new wxCheckBox(rootPanel, wxID_ANY, "滚动显示");
+    m_scrollPageSizeSpin = new wxSpinCtrl(rootPanel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, STOCK_DISPLAY_ITEM_MAX, DEFAULT_SCROLL_PAGE_SIZE);
+    m_scrollIntervalSpin = new wxSpinCtrl(rootPanel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 3600, DEFAULT_SCROLL_INTERVAL);
+    scrollOptSizer->Add(m_isScrollEnableCheck, 0);
+    scrollOptSizer->Add(new wxStaticText(rootPanel, wxID_ANY, "每页"), 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 15);
+    scrollOptSizer->Add(m_scrollPageSizeSpin, 0, wxLEFT, 4);
+    scrollOptSizer->Add(new wxStaticText(rootPanel, wxID_ANY, "只，间隔"), 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 4);
+    scrollOptSizer->Add(m_scrollIntervalSpin, 0, wxLEFT, 4);
+    scrollOptSizer->Add(new wxStaticText(rootPanel, wxID_ANY, "秒"), 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 4);
+    settingsBoxSizer->Add(scrollOptSizer, 0);
+
+    settingsBoxSizer->AddSpacer(8);
+
     // 涨跌颜色选择器
     // sizer = new wxBoxSizer(wxHORIZONTAL);
     // m_colourRise = new wxColourPickerCtrl(rootPanel, wxID_ANY, wxColour(255, 0, 0));
@@ -246,7 +303,27 @@ void LStockOptionView::LoadOptions()
     m_colorCheck->SetValue(g_data.IsDisplayColor());
     m_priorityDisplayChangedCheck->SetValue(g_data.IsPriorityDisplayChanged());
     m_isDisplayStockNameCheck->SetValue(g_data.IsDisplayName());
+    m_isDisplayCostCheck->SetValue(g_data.IsDisplayCost());
+    m_isDisplayCostProfitPriceCheck->SetValue(g_data.IsDisplayCostProfitPrice());
+    m_isDisplayCostProfitPercentCheck->SetValue(g_data.IsDisplayCostProfitPercent());
+    m_isDisplayAliasCheck->SetValue(g_data.IsDisplayAlias());
+    bool scrollEnable = g_data.IsScrollEnable();
+    m_isScrollEnableCheck->SetValue(scrollEnable);
+    m_scrollPageSizeSpin->SetValue(g_data.ScrollPageSize());
+    m_scrollIntervalSpin->SetValue(g_data.ScrollInterval());
+    m_scrollPageSizeSpin->Enable(scrollEnable);
+    m_scrollIntervalSpin->Enable(scrollEnable);
     m_solVM->SetData(g_data.AllStocks());
+
+    UpdateCostDisplayEnable();
+}
+
+void LStockOptionView::UpdateCostDisplayEnable()
+{
+    bool hasCostPrice = g_data.HasStockWithCostPrice();
+    m_isDisplayCostCheck->Enable(hasCostPrice);
+    m_isDisplayCostProfitPriceCheck->Enable(hasCostPrice);
+    m_isDisplayCostProfitPercentCheck->Enable(hasCostPrice);
 }
 
 void LStockOptionView::BindAllEvents()
@@ -289,6 +366,24 @@ void LStockOptionView::BindAllEvents()
                                         { g_data.IsPriorityDisplayChanged(event.IsChecked()); });
     m_isDisplayStockNameCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
                                     { g_data.IsDisplayName(event.IsChecked()); });
+    m_isDisplayCostCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
+                               { g_data.IsDisplayCost(event.IsChecked()); });
+    m_isDisplayCostProfitPriceCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
+                                          { g_data.IsDisplayCostProfitPrice(event.IsChecked()); });
+    m_isDisplayCostProfitPercentCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
+                                            { g_data.IsDisplayCostProfitPercent(event.IsChecked()); });
+    m_isDisplayAliasCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
+                                { g_data.IsDisplayAlias(event.IsChecked()); });
+    m_isScrollEnableCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event)
+                                {
+        bool en = event.IsChecked();
+        g_data.IsScrollEnable(en);
+        m_scrollPageSizeSpin->Enable(en);
+        m_scrollIntervalSpin->Enable(en); });
+    m_scrollPageSizeSpin->Bind(wxEVT_COMMAND_SPINCTRL_UPDATED, [](wxSpinEvent &event)
+                               { g_data.ScrollPageSize(event.GetValue()); });
+    m_scrollIntervalSpin->Bind(wxEVT_COMMAND_SPINCTRL_UPDATED, [](wxSpinEvent &event)
+                               { g_data.ScrollInterval(event.GetValue()); });
     m_cmbRefreshFreq->Bind(wxEVT_COMMAND_COMBOBOX_SELECTED, [this](wxCommandEvent &event)
                            {
         int freq = UtilStringHlp::parseInt(m_cmbRefreshFreq->GetValue());
@@ -342,6 +437,7 @@ void LStockOptionView::OnDeleteSel(wxCommandEvent &)
             if (g_data.DeleteStockByCode(data->code))
             {
                 m_solVM->EraseRow(row);
+                UpdateCostDisplayEnable();
             }
         }
     }
@@ -353,6 +449,7 @@ void LStockOptionView::OnBatchClear(wxCommandEvent &)
         return;
     g_data.ClearAllCodes();
     m_solVM->Clear();
+    UpdateCostDisplayEnable();
 }
 
 void LStockOptionView::OnMoveUp(wxCommandEvent &)
@@ -432,9 +529,13 @@ void LStockOptionView::OnRestoreDefault(wxCommandEvent &)
 
 void LStockOptionView::OnSaveConfig(wxCommandEvent &)
 {
-    if (g_data.IsChangeStockList())
+    bool needRestart = g_data.IsChangeStockList() ||
+                       g_data.IsScrollEnable() != m_initialScrollEnable ||
+                       g_data.ScrollPageSize() != m_initialScrollPageSize ||
+                       g_data.ScrollInterval() != m_initialScrollInterval;
+    if (needRestart)
     {
-        wxMessageBox("增删股票条数需要重启宿主程序后才能刷新界面", "温馨提示", wxICON_INFORMATION);
+        wxMessageBox("股票条数或滚动显示设置变更，需要重启宿主程序后才能刷新界面", "温馨提示", wxICON_INFORMATION);
     }
     g_data.SaveConfig();
     Close();
@@ -529,14 +630,44 @@ void LStockOptionView::OnStockListItemActivated(wxDataViewEvent &event)
         return;
     }
     unsigned int column = event.GetColumn();
-    if (column != STOCK::LStockListVM::Col_DecimalsText)
+    if (column != STOCK::LStockListVM::Col_DecimalsText &&
+        column != STOCK::LStockListVM::Col_CostPriceText &&
+        column != STOCK::LStockListVM::Col_DirectionText)
     {
         return;
     }
     WXUINT row = m_solVM->GetRow(item);
     if (row >= 0)
     {
-        m_stockListCtrl->EditItem(item, m_stockListCtrl->GetColumn(STOCK::LStockListVM::Col_DecimalsText));
+        // 方向列仅期货可编辑（股票只能买多，禁止设置）
+        if (column == STOCK::LStockListVM::Col_DirectionText)
+        {
+            auto data = m_solVM->GetRowData(item);
+            if (!data || !data->IsShortable())
+            {
+                return;
+            }
+        }
+        m_stockListCtrl->EditItem(item, m_stockListCtrl->GetColumn(column));
+    }
+}
+
+void LStockOptionView::OnStockListItemValueChanged(wxDataViewEvent &event)
+{
+    UpdateCostDisplayEnable();
+    event.Skip();
+}
+
+void LStockOptionView::OnStockListItemEditingStarted(wxDataViewEvent &event)
+{
+    // 方向列仅期货可编辑（股票只能买多，禁止设置），其他可编辑列不受影响
+    if (event.GetColumn() == STOCK::LStockListVM::Col_DirectionText)
+    {
+        auto data = m_solVM->GetRowData(event.GetItem());
+        if (!data || !data->IsShortable())
+        {
+            event.Veto();
+        }
     }
 }
 
@@ -544,4 +675,6 @@ wxBEGIN_EVENT_TABLE(LStockOptionView, wxFrame)
     EVT_CLOSE(LStockOptionView::OnClose)
 
     EVT_DATAVIEW_ITEM_ACTIVATED(LStockOptionView_StockListView, LStockOptionView::OnStockListItemActivated)
+    EVT_DATAVIEW_ITEM_VALUE_CHANGED(LStockOptionView_StockListView, LStockOptionView::OnStockListItemValueChanged)
+    EVT_DATAVIEW_ITEM_EDITING_STARTED(LStockOptionView_StockListView, LStockOptionView::OnStockListItemEditingStarted)
 wxEND_EVENT_TABLE()

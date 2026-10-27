@@ -1,0 +1,185 @@
+# WeatherPro
+
+WeatherPro 是一款为 [TrafficMonitor](https://github.com/zhongyang219/TrafficMonitor) 开发的天气信息插件，支持多种数据源和丰富的自定义选项。
+
+本项目原始仓库为 [Haojia521/TrafficMonitorPlugins](https://github.com/Haojia521/TrafficMonitorPlugins)，曾发布至 v0.14 版本，现已被归档。当前仓库对代码进行了全面重构与升级，并正式发布 v1.0 版本，后续的新版本也将在此仓库中发布。
+
+建议与TrafficMonitor v1.86及以上版本配合使用。
+
+> 注意： 本项目主要面向 Windows x64 开发与调试；x86 版本仅编译、未测试，可能存在问题。
+
+## 功能特性
+
+- 支持多种天气接口 （配置方法请参考[接口说明](docs/DataSourceGuide.md)）
+  - 天气网 (weather.com.cn)
+  - 和风天气 (qweather.com)
+  - OpenWeather (openweathermap.org)
+- 支持在任务栏以双行模式显示天气信息（含「任意位置强制双行」选项）
+- 支持设置数据常驻显示区
+- 支持在固定宽度的主窗口区滚动显示长文本
+- 支持丰富的天气信息自定义控制选项
+
+## 版本更新
+
+**v1.3.0**
+
+- [新增] 在插件右键菜单中添加了常用命令
+- [优化] 适配OpenWeather OneCall 4.0接口
+- [优化] 改进了部分日志信息
+
+**v1.3.1**
+
+- [修复] 修正了OpenWeather OneCall数据单位显示错误
+
+[查看历史更新](#历史更新)
+
+## 本次功能改进
+
+### 双行模式增强：任意位置强制双行
+
+- 新增设置项「主窗口任何情况下均开启双行模式」（`IDC_CHECK_DUAL_LINE_MODE_ALWAYS`）
+- 勾选后，主窗口在任务栏**任意位置**均占用双行显示，不再受「显示项目数为奇数且主项目位于最后」的限制
+- 原有「主窗口单独位于右端时启用双行模式」保持不变，仍按旧机制生效（奇数项落单时才分配双行高度）
+
+实现要点：
+
+- 插件接口升级至 API v8：`PluginInterface.h` 新增 `IPluginItem::IsDoubleLineExclusive()`（默认返回 0）
+- `MainItem::IsDoubleLineExclusive()` 根据配置 `enable_dual_line_mode_always` 返回 `1` / `0`，告知宿主「独占双行」
+- 双行绘制以宿主实际分配的高度为准：`dual_line = (启用双行开关) && h >= 32px` 时才按双行布局，避免旧宿主不给双行矩形时内容被挤压
+- 新增配置项 `enable_dual_line_mode_always`（`DataManager` 读写 + `MainSettingsDlg` 复选框 DDX 绑定 + `WeatherPro.rc` 中英文控件）
+
+注意事项：
+
+- `IsDoubleLineExclusive` 仅在任务栏「非水平排列」时生效
+- 需要 TrafficMonitor 宿主版本 ≥ 2026-07-16（官方 commit `32fc37a`，该提交才引入此接口），旧宿主不识别该接口时仅原「右端双行」功能生效
+
+## 程序界面介绍
+
+- 任务栏窗口主数据显示区
+
+  显示天气+气温，天气可渲染为图标或文本。新版支持按固定宽度显示，并滚动显示长文本。此处的天气数据可选择当前天气、今日天气、24\~48小时天气、48\~72小时天气。
+
+  ![主显示区](images/taskbar-wnd.png)
+
+  v1.1新增双行显示模式。当前任务栏为水平状态、TrafficMonitor的显示项目个数为奇数并且WeatherPro主项目位于最后，则可以占用两行空间绘制图标和文本。
+
+  ![主显示区双行模式](images/taskbar-wnd-dual-line-mode.png)
+
+  v1.0版本支持设置常驻信息显示区，按选定的时间段与数据项目显示数据。修改常驻显示区配置后需要重启TrafficMonitor使配置生效。
+
+  ![常驻显示区](images/taskbar-wnd-pinned-items.png)
+
+- 鼠标提示弹窗
+
+  ![提示弹窗](images/tooltip-info.png)
+
+- 设置界面
+
+  配置数据源、位置和数据显示方式等内容。当有新版本发布时，界面底部将显示“有新版”按钮引导用户下载。
+
+  ![设置](images/main-settings.png)
+
+- API设置界面
+
+  天气网API-weather.com.cn设置。
+
+  ![wcc选项](images/api-wcc-options.png)
+
+  和风天气API-qweather.com设置。
+
+  ![qw选项](images/api-qweather-options.png)
+
+  OpenWeather API-openweathermap.org设置
+
+  ![ow选项](images/api-openweather-options.png)
+
+- 位置设置界面
+
+  除按文本查询位置外，新增支持按经纬度查询位置。经纬度信息在特定接口是必需的，如和风天气(qwather.com)空气质量查询接口和OpenWeather的接口。
+
+  ![位置设置](images/set-location.png)
+
+- 常驻显示区设置
+
+  按照时间段+数据项设置常驻区。常驻区的显示顺序以及标签文本，可在TrafficMonitor的任务栏窗口设置页修改。
+
+  ![常驻区设置](images/pinned-items-settings.png)
+
+- 定位设置
+
+  自由选择自动定位的方式。如果所有方式均失败将不改变当前的位置信息。
+
+  ![定位设置](images/auto-loc-settings.png)
+
+## 项目构建
+
+请参考[构建说明文档](docs/Build.md)。
+
+## 历史更新
+
+- v1.2.0
+
+  - [优化] 内嵌多分辨率图标以适应不同DPI屏幕
+  - [优化] 位置设置界面显示待选位置的经纬度
+  - [优化] 支持主动检查插件更新
+  - [优化] 在检查插件更新、手动更新天气、检索位置时，显示非阻塞进度窗口
+  - [修复] 缺失天气网部分天气现象编码
+
+- v1.1.0
+
+  - [新增] 双行显式模式。在水平任务栏上，如果主项目窗口单独在最右端可以使用双行显式信息
+  - [新增] 设置是否在天气信息概览中显示详细位置坐标
+  - [修复] 日志时间戳为UTC时间而非本地时间
+  - [修复] 没有使用新版插件接口设置语言
+  - [修复] 和风天气API数据时间戳类型不一致
+  - [修复] 解析json字符串可能导致崩溃
+
+- v1.0.4
+
+  - [新增] 支持OpenWeather数据源
+  - [新增] 按经纬度设置目标位置
+  - [新增] 主窗口区滚动显示长文本
+  - [新增] 设置常驻数据显示区
+  - [新增] 存在天气预警时在图标右上角绘制通知圆点
+  - [新增] 新版本发布提醒
+  - [优化] 自动定位支持选用API位置、操作系统定位、IP地理坐标和IP属地名称
+  - [优化] 在独立窗口中查看详细的预警信息和日志
+  - [修复] 查询天气信息时没有正确设置线程语言
+  - [修复] 和风天气(QWeather)API在更换密钥后仍返回缓存JWT
+## 编译环境
+
+### 工具链要求
+
+- Visual Studio 2022（`v143` 工具集，MSVC 14.44 及以上）
+- 需安装「使用 C++ 的桌面开发」工作负载，并勾选 **MFC** 组件
+- Windows 10 / 11 SDK
+- 语言标准：C++20（`/std:c++20`）
+- 字符集：Unicode；MFC 使用动态链接（`UseOfMfc: Dynamic`）
+
+### 第三方依赖（已内嵌）
+
+项目已内嵌以下第三方静态库，位于 `third_party/` 目录，x64 配置无需额外安装：
+
+| 依赖 | 头文件 | 库文件 |
+| --- | --- | --- |
+| OpenSSL 3.0.22 | `third_party/openssl/include/openssl/` | `third_party/openssl/lib/libcrypto_static.lib`、`libssl_static.lib` |
+| zlib | `third_party/zlib/include/` | `third_party/zlib/lib/zlib.lib`（Release）、`zlibd.lib`（Debug） |
+
+### 编译步骤
+
+1. 打开 `TMP-WeatherPro.sln`
+2. 先编译 `WPCore`（静态库，会将 zlib / OpenSSL 合并归档进 `WPCore.lib`）
+3. 再编译 `WeatherPro`（MFC 动态库）
+4. 产物：`x64\Release\WeatherPro.dll`、`x64\Debug\WeatherPro.dll`
+
+### 命令行脚本（脱离 IDE 编译）
+
+项目内提供了两个脚本，直接用 MSVC 命令行工具链编译：
+
+- `build_wpcore.py`：编译 WPCore 源文件并用 `lib.exe` 归档，同时合并 zlib / OpenSSL 静态库，产出 `lib\x64\{Release,Debug}\WPCore.lib`
+- `build_weatherpro.py`：编译 WeatherPro MFC DLL（`pch.cpp` 用 `/Ycpch.h` 生成预编译头 → 编译各 `.cpp` → `rc.exe` 编译资源 → `link.exe` 链接 `mfc140u.lib` + gdiplus + WPCore 等）
+
+### 说明
+
+- **x64 配置**的第三方依赖已内嵌（`WPCore.vcxproj` 通过相对路径 `$(ProjectDir)..\third_party\...` 引用），无需配置任何环境变量
+- **Win32 配置**仍引用 `$(VCPKG_HOME)`、`$(OPENSSL_30)` 等环境变量（依赖 vcpkg），如无 32 位需求可只编译 x64

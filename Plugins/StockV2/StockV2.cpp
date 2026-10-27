@@ -450,10 +450,9 @@ namespace
         if (stock_index < 0) {
             return;
         }
-        // 显示走势图
-        wxFrame *frame = new wxFrame(NULL, wxID_ANY, "StockView");
+        // 显示走势图（LStockView 现为无边框置顶的独立顶层窗口，无需额外父窗口）
         wxPoint pt = wxGetMousePosition();
-        LStockViewer::LStockView *stock_view = new LStockViewer::LStockView(frame);
+        LStockViewer::LStockView *stock_view = new LStockViewer::LStockView(nullptr);
         stock_view->Setup(pt, stock_index);
     }
 
@@ -539,6 +538,7 @@ LStockPlugin *LStockPlugin::Instance()
 
 // LStockPlugin 构造
 LStockPlugin::LStockPlugin()
+    : m_scrollOffset(0), m_lastScrollTime(0)
 {
     AFX_MANAGE_STATE_MODULE();
     // 初始化wxWidgets GUI
@@ -551,6 +551,7 @@ LStockPlugin::LStockPlugin()
     for (size_t index = 0; index < m_displayStocks.size(); index++)
     {
         m_displayStocks[index].index = index;
+        m_displayStocks[index].slotIndex = (int)index;
     }
 
     LoadDisplayItems();
@@ -572,13 +573,14 @@ void LStockPlugin::OnInitialize(ITrafficMonitor *pApp)
 
 void LStockPlugin::LoadDisplayItems()
 {
-    for (LStockItem item : m_displayStocks)
+    for (LStockItem &item : m_displayStocks)
     {
         item.enable = false;
     }
     for (int i = 0; i < g_data.GetAllCodes().size(); ++i)
     {
         m_displayStocks[i].index = i;
+        m_displayStocks[i].slotIndex = i;
         m_displayStocks[i].enable = true;
     }
 }
@@ -587,20 +589,89 @@ IPluginItem *LStockPlugin::GetItem(int index)
 {
     AFX_MANAGE_STATE_MODULE();
 
-    // 不支持动态创建
-    size_t item_size = m_displayStocks.size();
-    if (g_data.GetAllCodes().size() < item_size)
-        item_size = g_data.GetAllCodes().size();
-    // if (item_size == 0)
-    //     item_size = 1;
-    if (index >= item_size)
+    int total = (int)g_data.GetAllCodes().size();
+    if (total == 0)
         return nullptr;
+
+    if (!g_data.IsScrollEnable())
+    {
+        // 未开启滚动：一只股票一个 item
+        if (index >= total)
+            return nullptr;
+        m_displayStocks[index].index = index;
+        m_displayStocks[index].slotIndex = index;
+        return &(m_displayStocks[index]);
+    }
+
+    // 开启滚动：固定返回 pageSize 个 item，滚动改变每个 item 对应的股票
+    int pageSize = g_data.ScrollPageSize();
+    if (pageSize < 1)
+        pageSize = 1;
+    if (pageSize > STOCK_DISPLAY_ITEM_MAX)
+        pageSize = STOCK_DISPLAY_ITEM_MAX;
+
+    int visibleCount = (total < pageSize) ? total : pageSize;
+    if (index >= visibleCount)
+        return nullptr;
+
+    // 股票列表变化后修正起始下标，防止越界
+    if (m_scrollOffset < 0 || m_scrollOffset >= total)
+        m_scrollOffset = 0;
+
+    m_displayStocks[index].index = (m_scrollOffset + index) % total;
+    m_displayStocks[index].slotIndex = index;
     return &(m_displayStocks[index]);
 }
 
 void LStockPlugin::DataRequired()
 {
     AFX_MANAGE_STATE(AfxGetStaticModuleState());
+
+    if (!g_data.IsScrollEnable())
+        return;
+
+    int total = (int)g_data.GetAllCodes().size();
+    if (total == 0)
+        return;
+
+    int pageSize = g_data.ScrollPageSize();
+    if (pageSize < 1)
+        pageSize = 1;
+    if (pageSize > STOCK_DISPLAY_ITEM_MAX)
+        pageSize = STOCK_DISPLAY_ITEM_MAX;
+
+    int visibleCount = (total < pageSize) ? total : pageSize;
+
+    // 滚动推进：股票数超过一页时才按间隔推进起始下标
+    if (total > pageSize)
+    {
+        ULONGLONG intervalMs = (ULONGLONG)g_data.ScrollInterval() * 1000;
+        if (intervalMs < 1000)
+            intervalMs = 1000; // 最小 1 秒
+
+        ULONGLONG now = GetTickCount64();
+        if (m_lastScrollTime == 0)
+        {
+            m_lastScrollTime = now; // 首次：只记录时间，不立即滚动
+        }
+        else if (now - m_lastScrollTime >= intervalMs)
+        {
+            m_scrollOffset = (m_scrollOffset + pageSize) % total;
+            m_lastScrollTime = now;
+        }
+    }
+    else
+    {
+        m_scrollOffset = 0; // 股票数不超过一页，固定显示全部
+    }
+
+    // 关键：直接刷新每个显示 item 的股票映射。
+    // 主程序在加载时一次性调用 GetItem 缓存 item 指针，之后不再调用，
+    // 因此滚动后必须在这里更新 index，DrawItem 才能读到新的股票。
+    for (int i = 0; i < visibleCount; i++)
+    {
+        m_displayStocks[i].index = (m_scrollOffset + i) % total;
+    }
 }
 
 const wchar_t *LStockPlugin::GetInfo(PluginInfoIndex index)

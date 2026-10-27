@@ -1,0 +1,27 @@
+# 构建输出
+bin/
+obj/
+Release/
+Debug/
+*.dll
+*.lib
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.tlog
+*.log
+
+# Visual Studio 缓存
+.vs/
+*.vcxproj.user
+*.vcxproj.filters
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# 操作系统
+.DS_Store
+Thumbs.db

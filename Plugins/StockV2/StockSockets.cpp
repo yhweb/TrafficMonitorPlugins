@@ -35,20 +35,26 @@ LStockServerSocket &LStockServerSocket::GetInstance()
 }
 
 LStockServerSocket::LStockServerSocket()
-    : m_ListenSocket(INVALID_SOCKET), m_ListenEvent(NULL), m_bRun(FALSE), m_pListenThread(NULL), m_webbridgeport(0), m_bWsaInit(FALSE)
+    : m_ListenSocket(INVALID_SOCKET), m_ListenEvent(NULL), m_bRun(FALSE), m_pListenThread(NULL), m_webbridgeport(0), m_bWsaInit(FALSE), m_refCount(0)
 {
     // 初始化线程锁
     InitializeCriticalSection(&m_csClient);
     InitializeCriticalSection(&m_csPending);
+    InitializeCriticalSection(&m_csRef);
     m_bridge = new LSocketBridge();
 }
 
 LStockServerSocket::~LStockServerSocket()
 {
+    // 析构时强制停止（先清引用计数，忽略仍在使用的弹窗）
+    EnterCriticalSection(&m_csRef);
+    m_refCount = 0;
+    LeaveCriticalSection(&m_csRef);
     StopSocketServer();
     // 销毁线程锁
     DeleteCriticalSection(&m_csClient);
     DeleteCriticalSection(&m_csPending);
+    DeleteCriticalSection(&m_csRef);
     SAFE_DELETE(m_bridge);
 }
 
@@ -79,11 +85,26 @@ BOOL LStockServerSocket::StartSocketServer()
 {
     AFX_MANAGE_STATE(AfxGetStaticModuleState());
 
-    if (m_bRun)
+    // 引用计数：第一个使用者才真正启动 server，其余仅增加引用。
+    // 解决多弹窗共享单例 server 时，关闭一个弹窗就停掉整个 server 的问题。
+    EnterCriticalSection(&m_csRef);
+    const bool needStart = (m_refCount == 0);
+    ++m_refCount;
+    LeaveCriticalSection(&m_csRef);
+
+    if (!needStart)
     {
-        LLOG_WARN("Socket Server is already running!");
+        LLOG_INFO("Socket Server already running, ref=%d", m_refCount);
         return TRUE;
     }
+
+    // 启动失败时回退引用计数（lambda 定义于成员函数内，可访问 this 的私有成员）
+    auto rollbackRef = [this]() {
+        EnterCriticalSection(&m_csRef);
+        if (m_refCount > 0)
+            --m_refCount;
+        LeaveCriticalSection(&m_csRef);
+    };
 
     // 初始化异步业务任务队列
     m_taskQueue.Init();
@@ -95,6 +116,7 @@ BOOL LStockServerSocket::StartSocketServer()
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
         {
             LLOG_ERROR("Socket INIT FAILED!");
+            rollbackRef();
             return FALSE;
         }
         m_bWsaInit = TRUE;
@@ -105,6 +127,7 @@ BOOL LStockServerSocket::StartSocketServer()
     if (m_ListenSocket == INVALID_SOCKET)
     {
         LLOG_ERROR("Socket Server Create FAILED!");
+        rollbackRef();
         return FALSE;
     }
 
@@ -119,6 +142,7 @@ BOOL LStockServerSocket::StartSocketServer()
         LLOG_ERROR("Socket Server Bind FAILED!");
         closesocket(m_ListenSocket);
         m_ListenSocket = INVALID_SOCKET;
+        rollbackRef();
         return FALSE;
     }
 
@@ -134,6 +158,7 @@ BOOL LStockServerSocket::StartSocketServer()
         LLOG_ERROR("WSACreateEvent FAILED!");
         closesocket(m_ListenSocket);
         m_ListenSocket = INVALID_SOCKET;
+        rollbackRef();
         return FALSE;
     }
     WSAEventSelect(m_ListenSocket, m_ListenEvent, FD_ACCEPT);
@@ -146,6 +171,7 @@ BOOL LStockServerSocket::StartSocketServer()
         m_ListenEvent = NULL;
         closesocket(m_ListenSocket);
         m_ListenSocket = INVALID_SOCKET;
+        rollbackRef();
         return FALSE;
     }
 
@@ -161,6 +187,7 @@ BOOL LStockServerSocket::StartSocketServer()
         m_ListenEvent = NULL;
         closesocket(m_ListenSocket);
         m_ListenSocket = INVALID_SOCKET;
+        rollbackRef();
         return FALSE;
     }
     m_pListenThread = hThread;
@@ -173,6 +200,19 @@ BOOL LStockServerSocket::StartSocketServer()
 
 void LStockServerSocket::StopSocketServer()
 {
+    // 引用计数：只有最后一个使用者停止时才真正关闭 server
+    EnterCriticalSection(&m_csRef);
+    if (m_refCount > 0)
+        --m_refCount;
+    const bool needStop = (m_refCount == 0);
+    LeaveCriticalSection(&m_csRef);
+
+    if (!needStop)
+    {
+        LLOG_INFO("Socket Server still in use, ref=%d", m_refCount);
+        return;
+    }
+
     if (!m_bRun)
         return;
 
@@ -1056,11 +1096,21 @@ UINT __cdecl LStockServerSocket::ListenThread(LPVOID lpParam)
 //----------------------------------------------------------------------
 LStockServerSocket::TaskQueue::TaskQueue() : m_hEvent(NULL), m_bRun(FALSE)
 {
+    // 临界区与事件在构造时一次性创建，随析构一次性释放。
+    // 工作线程在阻塞 HTTP 期间仍可能持有/使用这些对象，若在 Uninit 中过早删除会导致 use-after-free。
+    InitializeCriticalSection(&m_cs);
+    m_hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
 }
 
 LStockServerSocket::TaskQueue::~TaskQueue()
 {
     Uninit();
+    DeleteCriticalSection(&m_cs);
+    if (m_hEvent != NULL)
+    {
+        CloseHandle(m_hEvent);
+        m_hEvent = NULL;
+    }
 }
 
 void LStockServerSocket::TaskQueue::Init()
@@ -1068,8 +1118,6 @@ void LStockServerSocket::TaskQueue::Init()
     if (m_bRun)
         return;
 
-    InitializeCriticalSection(&m_cs);
-    m_hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
     m_bRun = TRUE;
 
     // 启动业务工作线程
@@ -1091,17 +1139,15 @@ void LStockServerSocket::TaskQueue::Uninit()
         return;
 
     m_bRun = FALSE;
-    SetEvent(m_hEvent);
-    Sleep(100); // 等待线程自然退出
+    SetEvent(m_hEvent); // 唤醒等待事件的工作线程，使其退出循环
 
+    // 清空待处理队列。注意：这里不再删除临界区/事件——工作线程可能仍阻塞在 HTTP 中，
+    // 过早删除会导致 use-after-free；它们会在 HTTP 返回后检测到 m_bRun==FALSE 自行退出。
+    // 临界区/事件在 TaskQueue 析构时统一释放。
     EnterCriticalSection(&m_cs);
     while (!m_queue.empty())
         m_queue.pop();
     LeaveCriticalSection(&m_cs);
-
-    DeleteCriticalSection(&m_cs);
-    CloseHandle(m_hEvent);
-    m_hEvent = NULL;
 }
 
 void LStockServerSocket::TaskQueue::PushTask(SharedClientTask task)

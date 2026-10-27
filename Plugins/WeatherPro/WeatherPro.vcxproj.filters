@@ -1,0 +1,213 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="源文件">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="头文件">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="资源文件">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Items">
+      <UniqueIdentifier>{d97990ba-a4c2-46b1-b6e3-96a96da9007c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="API">
+      <UniqueIdentifier>{92cb9174-16d7-4d9c-9b47-835affea841d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="DLG">
+      <UniqueIdentifier>{cc7e9c31-e364-4e29-bc9c-b216d0fd3cba}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="WeatherPro.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="pch.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="MainItem.cpp">
+      <Filter>Items</Filter>
+    </ClCompile>
+    <ClCompile Include="IconResources.cpp">
+      <Filter>Items</Filter>
+    </ClCompile>
+    <ClCompile Include="WeatherApiWCCS.cpp">
+      <Filter>API</Filter>
+    </ClCompile>
+    <ClCompile Include="ApiCollections.cpp">
+      <Filter>API</Filter>
+    </ClCompile>
+    <ClCompile Include="WeatherApiQWeather.cpp">
+      <Filter>API</Filter>
+    </ClCompile>
+    <ClCompile Include="Common.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="WeatherApiOpenWeather.cpp">
+      <Filter>API</Filter>
+    </ClCompile>
+    <ClCompile Include="DataManager.cpp">
+      <Filter>API</Filter>
+    </ClCompile>
+    <ClCompile Include="MainSettingsDlg.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+    <ClCompile Include="SetLocationDlg.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+    <ClCompile Include="EditCtrlFloatNumber.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+    <ClCompile Include="OptionsWccDlg.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+    <ClCompile Include="OptionsQwDlg.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+    <ClCompile Include="OptionsOwDlg.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+    <ClCompile Include="AutoLocSettingsDlg.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+    <ClCompile Include="TextViewerDlg.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+    <ClCompile Include="PinnedItem.cpp">
+      <Filter>Items</Filter>
+    </ClCompile>
+    <ClCompile Include="PinnedItemSettingsDlg.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+    <ClCompile Include="ModalProgressDlg.cpp">
+      <Filter>DLG</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="WeatherPro.def">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="res\WeatherPro.rc2">
+      <Filter>资源文件</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="framework.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="targetver.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Resource.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="WeatherPro.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="pch.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="MainItem.h">
+      <Filter>Items</Filter>
+    </ClInclude>
+    <ClInclude Include="IconResources.h">
+      <Filter>Items</Filter>
+    </ClInclude>
+    <ClInclude Include="WeatherAPI.h">
+      <Filter>API</Filter>
+    </ClInclude>
+    <ClInclude Include="WeatherApiWCCS.h">
+      <Filter>API</Filter>
+    </ClInclude>
+    <ClInclude Include="ApiCollections.h">
+      <Filter>API</Filter>
+    </ClInclude>
+    <ClInclude Include="WeatherApiQWeather.h">
+      <Filter>API</Filter>
+    </ClInclude>
+    <ClInclude Include="Common.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="WeatherApiOpenWeather.h">
+      <Filter>API</Filter>
+    </ClInclude>
+    <ClInclude Include="DataManager.h">
+      <Filter>API</Filter>
+    </ClInclude>
+    <ClInclude Include="MainSettingsDlg.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+    <ClInclude Include="SetLocationDlg.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+    <ClInclude Include="EditCtrlFloatNumber.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+    <ClInclude Include="OptionsWccDlg.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+    <ClInclude Include="OptionsQwDlg.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+    <ClInclude Include="OptionsOwDlg.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+    <ClInclude Include="AutoLocSettingsDlg.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+    <ClInclude Include="TextViewerDlg.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+    <ClInclude Include="PinnedItem.h">
+      <Filter>Items</Filter>
+    </ClInclude>
+    <ClInclude Include="Types.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="PinnedItemSettingsDlg.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+    <ClInclude Include="ModalProgressDlg.h">
+      <Filter>DLG</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="WeatherPro.rc">
+      <Filter>资源文件</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="res\QR_AliPay.bmp">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="res\QR_WeChat.bmp">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="res\qw-fill-ms.png">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="res\qw-hollow-ms.png">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="res\loading-ms.png">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="res\ow-ms.png">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="res\wcc-ms.png">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="res\notify-dot.ico">
+      <Filter>资源文件</Filter>
+    </Image>
+    <Image Include="res\update-weather.ico">
+      <Filter>资源文件</Filter>
+    </Image>
+  </ItemGroup>
+</Project>

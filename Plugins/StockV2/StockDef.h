@@ -3,6 +3,8 @@
 #include <wx/dataview.h>
 #include <wx/hashmap.h>
 #include <memory>
+#include <mutex>
+#include <cmath>
 #include <wx/sharedptr.h>
 #include <utilities/yyjson/yyjson.h>
 #include "StockSockets.h"
@@ -199,35 +201,120 @@ namespace STOCK
         wxString name;
         wxString code;
         wxString url;
-        unsigned int decimals; // 小数点位数
+        unsigned int decimals = 2; // 小数点位数
+        double costPrice = 0.0; // 成本价格，0 表示未设置
+        bool isShort = false;   // 成本价方向：false=买多，true=卖空（仅期货支持做空）
 
         wxString changePrice;       // change
         wxString changeFluctuation; // percent
+        wxString costProfitPrice;   // 相对成本价的盈亏额（当前价-成本价，带 +/−）
+        wxString costProfitPercent; // 相对成本价的盈亏幅度（带 +/−）
 
     private:
-        Price open;           // 今日开盘价
-        Price prevclose;      // 昨日收盘价
-        Price price;          // 当前价格
-        Price high;           // 最高价
-        Price low;            // 最低价
-        Volume totalVolume_i; // 成交量(股)
-        Amount totalAmount_i; // 成交额(元)
+        Price open = NAN;           // 今日开盘价
+        Price prevclose = NAN;      // 昨日收盘价
+        Price price = NAN;          // 当前价格
+        Price high = NAN;           // 最高价
+        Price low = NAN;            // 最低价
+        Volume totalVolume_i = 0;   // 成交量(股)
+        Amount totalAmount_i = NAN; // 成交额(元)
 
-        Price priceLimit; // 价格限制
+        Price priceLimit = NAN; // 价格限制
 
         // StockPeriodDataMap period_data_map;
         StockPeriodRawDataMap period_raw_data_map;
         StockPeriodTimeMap period_time_map;
 
+        // 保护本对象可变字段（price/open/name/changePrice/period_*_map 等）的互斥锁。
+        // 这些字段会被「实时刷新工作线程」(LoadByRealtimeData)、「socket 工作线程」
+        // (updatePeriodRawData/GetBridgData) 与「UI 线程」(读取 name/changeFluctuation 等)
+        // 并发访问；无锁会导致 wxString 写时复制 refcount 竞争 → 堆损坏 → 快速异常检测失败。
+        // 用 recursive_mutex 以兼容 UpdateCostProfit 在 LoadByRealtimeData 内部重入。
+        mutable std::recursive_mutex m_mtx;
+
     public:
         wxString GetCurrentPrice() const
         {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
             return UtilStringHlp::toFixed(price, decimals);
         }
 
         wxString GetChangePrice() const
         {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
             return this->changePrice;
+        }
+
+        wxString GetCostPriceText() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            if (costPrice <= 0.0)
+                return wxEmptyString;
+            return UtilStringHlp::toFixed(costPrice, decimals);
+        }
+
+        // 是否支持做空（期货等），用于决定是否启用买卖方向选择
+        bool IsShortable() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            MarketType t = market(code);
+            return t == MarketType::MarketType_NF ||
+                   t == MarketType::MarketType_HF ||
+                   t == MarketType::MarketType_CFF;
+        }
+
+        // 相对成本价的盈亏方向：>0 盈利，<0 亏损，==0 持平（未设置成本价时返回 0）
+        int GetCostProfitDirection() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            if (costPrice <= 0.0)
+                return 0;
+            double diff = price - costPrice;
+            if (diff > 0.0)
+                return isShort ? -1 : 1; // 买多盈利 / 卖空亏损
+            if (diff < 0.0)
+                return isShort ? 1 : -1; // 卖空盈利 / 买多亏损
+            return 0;
+        }
+
+        // 根据当前价与成本价计算盈亏额/盈亏幅度（仅当设置了成本价时）
+        void UpdateCostProfit();
+
+        // ---------- 线程安全 getter（返回副本，内部加锁，供 UI 线程直接读取可变字段）----------
+        wxString GetName() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            return name;
+        }
+        wxString GetCode() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            return code;
+        }
+        wxString GetChangeFluctuation() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            return changeFluctuation;
+        }
+        wxString GetCostProfitPrice() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            return costProfitPrice;
+        }
+        wxString GetCostProfitPercent() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            return costProfitPercent;
+        }
+        double GetCostPrice() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            return costPrice;
+        }
+        unsigned int GetDecimals() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            return decimals;
         }
 
     public:
@@ -259,27 +346,32 @@ namespace STOCK
 
         void ResetStockPeriodData(LStockPeriodType type)
         {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
             period_raw_data_map.erase(type);
             period_time_map.erase(type);
         }
 
         BOOL CanUpdateStockPeriodData(LStockPeriodType type)
         {
-            auto &&timeIt = period_time_map.find(type);
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            auto timeIt = period_time_map.find(type);
             if (timeIt == period_time_map.end())
             {
-                return -1;
+                // 首次请求：无缓存，允许拉取
+                return TRUE;
             }
-            auto &m_lastTime = timeIt->second;
             ClockTimePoint now = Clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(now - m_lastTime);
-            double interval = static_cast<double>(duration.count()) / 1000.0;
-            return interval > 5;
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - timeIt->second);
+            // 距离上次更新不足 4 秒则复用缓存，避免 JS 侧 5 秒轮询 + 瞬时重复请求每次都同步重拉 HTTP
+            return duration.count() > 4000;
         }
 
         void updatePeriodRawData(LStockPeriodType type, wxString periodRawData)
         {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
             period_raw_data_map[type] = periodRawData;
+            // 记录更新时间，供 CanUpdateStockPeriodData 节流缓存
+            period_time_map[type] = Clock::now();
         }
 
         // void addTimelineData(wxString json_data)
@@ -572,6 +664,8 @@ namespace STOCK
             Col_NameText,
             Col_DecimalsText,
             Col_CodeText,
+            Col_CostPriceText,
+            Col_DirectionText,
         };
 
         LStockListVM() : wxDataViewVirtualListModel(0)

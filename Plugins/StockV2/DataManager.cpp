@@ -24,6 +24,13 @@ namespace
     static const auto KEY_CFG_DISPLAY_COLOR = "/stock/is_display_color";
     static const auto KEY_CFG_DISPLAY_NAME = "/stock/is_display_name";
     static const auto KEY_CFG_PRIORITY_DISPLAY_CHANGE = "/stock/is_priority_display_changed";
+    static const auto KEY_CFG_DISPLAY_COST = "/stock/is_display_cost";
+    static const auto KEY_CFG_DISPLAY_COST_PROFIT_PRICE = "/stock/is_display_cost_profit_price";
+    static const auto KEY_CFG_DISPLAY_COST_PROFIT_PERCENT = "/stock/is_display_cost_profit_percent";
+    static const auto KEY_CFG_DISPLAY_ALIAS = "/stock/is_display_alias";
+    static const auto KEY_CFG_SCROLL_ENABLE = "/stock/is_scroll_enable";
+    static const auto KEY_CFG_SCROLL_PAGE_SIZE = "/stock/scroll_page_size";
+    static const auto KEY_CFG_SCROLL_INTERVAL = "/stock/scroll_interval";
     static const auto KEY_CFG_KLINE_SIZE_W = "/stock/kline/size/w";
     static const auto KEY_CFG_KLINE_SIZE_H = "/stock/kline/size/h";
 
@@ -41,6 +48,148 @@ namespace
         long long b = distB(rng);
 
         return a + b;
+    }
+
+    // ==================== 闭市退避 + 开盘前探针 ====================
+    //
+    // 动机：交易时段之外行情不再变化，仍按用户频率（默认 10 秒）持续抓取纯属空转。
+    //       只持 A股时一周 168 小时里约 148 小时是闭市（≈88%）。
+    //
+    // 做法：不维护交易日历，改用「行情内容是否变化」当判据 —— 连续多轮响应文本完全一致
+    //       就判定闭市并拉长刷新间隔。好处是周末/法定节假日/临时休市/混市场全自动正确，
+    //       也不会因为日历写错而把行情饿死。
+    //
+    // 唯一副作用是开盘后要等一个退避周期才发现，所以再用「开盘前探针」兜住：
+    //       在这些时刻的前几分钟把手表拨回用户频率，开盘即可秒级刷新。
+    //       全部按北京时间判断。
+
+    // 连续多少轮行情完全不变才升一档退避。
+    // 取 6 而非 1 是为了躲开盘中偶发的短暂停顿（冷门品种一两分钟没成交），
+    // 万一误判，代价也只是间隔从 10s 变成 30s。
+    constexpr int REFRESH_STILL_ROUNDS = 6;
+
+    // 退避档位（秒）。0 = 保持用户设定频率；实际间隔 = max(用户频率, 该档位)。
+    // 用 max 而不是直接赋值，是为了兼容用户把频率设得比档位还大（如 300 秒）的情形。
+    static const unsigned int REFRESH_BACKOFF_SECS[] = {0, 30, 60, 120, 300};
+    constexpr size_t REFRESH_BACKOFF_LEVELS = sizeof(REFRESH_BACKOFF_SECS) / sizeof(REFRESH_BACKOFF_SECS[0]);
+
+    // 探针按市场分组，只在该组市场出现在自选列表里时才点亮
+    enum class ProbeGroup
+    {
+        AShare = 0,
+        CNFutures,
+        HK,
+        US,
+        Count,
+    };
+
+    struct RefreshProbe
+    {
+        ProbeGroup group;
+        int startMinute; // 北京时间当日分钟数（触发起点）
+        int holdMinutes; // 命中后保持「用户频率」的时长
+        const char *label;
+    };
+
+    // 各市场的开盘前探针。holdMinutes 取 65 分钟（覆盖开盘后那一段，之后行情自己在动，退避自然不再触发）。
+    // 美股：夏令时 21:30、冬令时 22:30（北京时间）开盘，故 hold 给到 75 分钟覆盖两种情形，
+    //       这样不必自己去判断美国夏令时。
+    static const RefreshProbe REFRESH_PROBES[] = {
+        {ProbeGroup::AShare, 9 * 60 + 25, 65, "A股早盘"},
+        {ProbeGroup::AShare, 12 * 60 + 55, 65, "A股午盘"},
+        {ProbeGroup::CNFutures, 8 * 60 + 55, 65, "国内期货日盘"},
+        {ProbeGroup::CNFutures, 20 * 60 + 55, 65, "国内期货夜盘"},
+        {ProbeGroup::HK, 9 * 60 + 25, 65, "港股早盘"},
+        {ProbeGroup::HK, 12 * 60 + 55, 65, "港股午盘"},
+        {ProbeGroup::US, 21 * 60 + 25, 75, "美股"},
+    };
+
+    // 市场类型 -> 探针分组；不属于任何分组的返回 Count
+    ProbeGroup ToProbeGroup(MarketType type)
+    {
+        switch (type)
+        {
+        case MarketType::MarketType_SZ_SH:
+        case MarketType::MarketType_BJ:
+        case MarketType::MarketType_GN:
+        case MarketType::MarketType_HY:
+        case MarketType::MarketType_DY:
+        case MarketType::MarketType_SI:
+        case MarketType::MarketType_CNI:
+        case MarketType::MarketType_REPO:
+            return ProbeGroup::AShare;
+        case MarketType::MarketType_NF:
+        case MarketType::MarketType_CFF:
+            return ProbeGroup::CNFutures;
+        case MarketType::MarketType_HK:
+        case MarketType::MarketType_HKAP:
+            return ProbeGroup::HK;
+        case MarketType::MarketType_US:
+            return ProbeGroup::US;
+        default:
+            break;
+        }
+        return ProbeGroup::Count;
+    }
+
+    // 自选列表里实际出现过的分组（位图）。没持有的市场不开探针，免得白白恢复频率。
+    unsigned int WatchlistGroupMask()
+    {
+        unsigned int mask = 0;
+        const wxArrayString codes = g_data.GetAllCodes();
+        for (size_t i = 0; i < codes.GetCount(); i++)
+        {
+            const ProbeGroup group = ToProbeGroup(market(codes[i]));
+            if (group != ProbeGroup::Count)
+            {
+                mask |= (1u << static_cast<int>(group));
+            }
+        }
+        return mask;
+    }
+
+    // 取北京时间。用 UTC 加 8 小时推算，不依赖宿主机的时区设置
+    //（中国自 1991 年起无夏令时，UTC+8 是常数）。
+    void GetBeijingTime(SYSTEMTIME &out)
+    {
+        FILETIME ft{};
+        GetSystemTimeAsFileTime(&ft);
+
+        ULARGE_INTEGER ul;
+        ul.LowPart = ft.dwLowDateTime;
+        ul.HighPart = ft.dwHighDateTime;
+        ul.QuadPart += 8ULL * 60ULL * 60ULL * 10000000ULL;
+
+        ft.dwLowDateTime = ul.LowPart;
+        ft.dwHighDateTime = ul.HighPart;
+        FileTimeToSystemTime(&ft, &out);
+    }
+
+    // 当前是否落在某个探针窗口内；命中则返回该探针，否则 nullptr。
+    // 周末不点亮：四个市场全部休市，点亮只是白白恢复频率。
+    // （按周一到周五的 09:25/12:55/08:55/20:55/21:25 计时；不区分法定节假日 —— 一旦未能点亮，
+    //   退避档位最长也就 300 秒，只是开盘慢几分钟，不会漏数据。）
+    const RefreshProbe *ActiveProbe(const unsigned int groupMask, const SYSTEMTIME &bj)
+    {
+        if (bj.wDayOfWeek == 0 || bj.wDayOfWeek == 6)
+        {
+            return nullptr;
+        }
+
+        const int nowSec = bj.wHour * 3600 + bj.wMinute * 60 + bj.wSecond;
+        for (const RefreshProbe &probe : REFRESH_PROBES)
+        {
+            if ((groupMask & (1u << static_cast<int>(probe.group))) == 0)
+            {
+                continue;
+            }
+            const int startSec = probe.startMinute * 60;
+            if (nowSec >= startSec && nowSec < startSec + probe.holdMinutes * 60)
+            {
+                return &probe;
+            }
+        }
+        return nullptr;
     }
 
     void OnRefreshStockRealtimeData(LPVOID pParam)
@@ -70,6 +219,12 @@ namespace
         if (UtilNetHlp::GetURL(url.ToStdWstring(), jsonp, false, WEB_USERAGENT, strHeaders, strHeaders.GetLength()))
         {
             g_data.HandleStockRealtimeData(jsonp);
+
+            // 闭市退避：拿本轮响应原文当「行情有没有在动」的判据。
+            // 只比较不解析，所以不需要区分 GBK/UTF-8，也不需要碰任何 MarketType 的字段布局。
+            // 注意：只有真正拿到响应才参与判断；网络失败时不喂签名，
+            // 免得把网络故障当成「闭市」而把刷新间隔越拉越长。
+            g_data.UpdateRefreshThrottle(jsonp);
         }
 
         // m_currentRequest = wxWebSession::GetDefault().CreateRequest(wxApp::GetInstance(), url);
@@ -138,6 +293,7 @@ const wxString LDataManager::GetModuleName()
 
 const wxArrayString LDataManager::GetAllCodes()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     wxArrayString all_codes;
     for (const auto &data : m_stockConfig.datas)
     {
@@ -199,6 +355,91 @@ bool LDataManager::IsPriorityDisplayChanged() const
     return m_stockConfig.isPriorityDisplayChanged;
 }
 
+void LDataManager::IsDisplayCost(bool flag)
+{
+    m_stockConfig.isDisplayCost = flag;
+}
+
+bool LDataManager::IsDisplayCost() const
+{
+    return m_stockConfig.isDisplayCost;
+}
+
+void LDataManager::IsDisplayCostProfitPrice(bool flag)
+{
+    m_stockConfig.isDisplayCostProfitPrice = flag;
+}
+
+bool LDataManager::IsDisplayCostProfitPrice() const
+{
+    return m_stockConfig.isDisplayCostProfitPrice;
+}
+
+void LDataManager::IsDisplayCostProfitPercent(bool flag)
+{
+    m_stockConfig.isDisplayCostProfitPercent = flag;
+}
+
+bool LDataManager::IsDisplayCostProfitPercent() const
+{
+    return m_stockConfig.isDisplayCostProfitPercent;
+}
+
+void LDataManager::IsDisplayAlias(bool flag)
+{
+    m_stockConfig.isDisplayAlias = flag;
+}
+
+bool LDataManager::IsDisplayAlias() const
+{
+    return m_stockConfig.isDisplayAlias;
+}
+
+void LDataManager::IsScrollEnable(bool flag)
+{
+    m_stockConfig.isScrollEnable = flag;
+}
+
+bool LDataManager::IsScrollEnable() const
+{
+    return m_stockConfig.isScrollEnable;
+}
+
+void LDataManager::ScrollPageSize(int num)
+{
+    m_stockConfig.scrollPageSize = num;
+}
+
+int LDataManager::ScrollPageSize() const
+{
+    return m_stockConfig.scrollPageSize;
+}
+
+void LDataManager::ScrollInterval(int num)
+{
+    m_stockConfig.scrollInterval = num;
+}
+
+int LDataManager::ScrollInterval() const
+{
+    return m_stockConfig.scrollInterval;
+}
+
+bool LDataManager::HasStockWithCostPrice() const
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
+    bool has = false;
+    m_stock_cache.ForEach(
+        [&has](const wxString &code, StockDataPtr stock)
+        {
+            if (stock && stock->costPrice > 0.0)
+            {
+                has = true;
+            }
+        });
+    return has;
+}
+
 void LDataManager::KLineWH(int w, int h)
 {
     m_stockConfig.klineW = w;
@@ -242,6 +483,7 @@ void LDataManager::DecimalPlaces(int num)
 
 void LDataManager::InitConfig()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     wxConfigBase *pConfig = wxConfigBase::Get();
 
     wxString all_stock_datas = pConfig->Read(KEY_CFG_ALL_STOCK_DATA);
@@ -280,6 +522,13 @@ void LDataManager::InitConfig()
     m_stockConfig.isDisplayColor = pConfig->ReadBool(KEY_CFG_DISPLAY_COLOR, true);
     m_stockConfig.isDisplayName = pConfig->ReadBool(KEY_CFG_DISPLAY_NAME, true);
     m_stockConfig.isPriorityDisplayChanged = pConfig->ReadBool(KEY_CFG_PRIORITY_DISPLAY_CHANGE, false);
+    m_stockConfig.isDisplayCost = pConfig->ReadBool(KEY_CFG_DISPLAY_COST, true);
+    m_stockConfig.isDisplayCostProfitPrice = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, true);
+    m_stockConfig.isDisplayCostProfitPercent = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, true);
+    m_stockConfig.isDisplayAlias = pConfig->ReadBool(KEY_CFG_DISPLAY_ALIAS, false);
+    m_stockConfig.isScrollEnable = pConfig->ReadBool(KEY_CFG_SCROLL_ENABLE, false);
+    m_stockConfig.scrollPageSize = pConfig->Read(KEY_CFG_SCROLL_PAGE_SIZE, DEFAULT_SCROLL_PAGE_SIZE);
+    m_stockConfig.scrollInterval = pConfig->Read(KEY_CFG_SCROLL_INTERVAL, DEFAULT_SCROLL_INTERVAL);
 
     m_stockConfig.klineW = pConfig->Read(KEY_CFG_KLINE_SIZE_W, DEFAULT_KLINE_VIEW_W);
     m_stockConfig.klineH = pConfig->Read(KEY_CFG_KLINE_SIZE_H, DEFAULT_KLINE_VIEW_H);
@@ -307,12 +556,20 @@ void LDataManager::ReLoadConfig()
     m_stockConfig.isDisplayColor = pConfig->ReadBool(KEY_CFG_DISPLAY_COLOR, true);
     m_stockConfig.isDisplayName = pConfig->ReadBool(KEY_CFG_DISPLAY_NAME, true);
     m_stockConfig.isPriorityDisplayChanged = pConfig->ReadBool(KEY_CFG_PRIORITY_DISPLAY_CHANGE, false);
+    m_stockConfig.isDisplayCost = pConfig->ReadBool(KEY_CFG_DISPLAY_COST, true);
+    m_stockConfig.isDisplayCostProfitPrice = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, true);
+    m_stockConfig.isDisplayCostProfitPercent = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, true);
+    m_stockConfig.isDisplayAlias = pConfig->ReadBool(KEY_CFG_DISPLAY_ALIAS, false);
+    m_stockConfig.isScrollEnable = pConfig->ReadBool(KEY_CFG_SCROLL_ENABLE, false);
+    m_stockConfig.scrollPageSize = pConfig->Read(KEY_CFG_SCROLL_PAGE_SIZE, DEFAULT_SCROLL_PAGE_SIZE);
+    m_stockConfig.scrollInterval = pConfig->Read(KEY_CFG_SCROLL_INTERVAL, DEFAULT_SCROLL_INTERVAL);
     m_stockConfig.klineW = pConfig->Read(KEY_CFG_KLINE_SIZE_W, DEFAULT_KLINE_VIEW_W);
     m_stockConfig.klineH = pConfig->Read(KEY_CFG_KLINE_SIZE_H, DEFAULT_KLINE_VIEW_H);
 }
 
 void LDataManager::ReLoadAllStocks()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     m_stock_cache.clear();
     for (auto &&data : m_stockConfig.datas)
     {
@@ -326,17 +583,26 @@ void LDataManager::ReLoadAllStocks()
 
 bool LDataManager::IsChangeStockList()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     return AllStocks().size() != m_stockConfig.datas.size();
 }
 
 void LDataManager::SaveConfig()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     wxConfigBase *pConfig = wxConfigBase::Get();
 
     pConfig->Write(KEY_CFG_REALTIME_REFRESH_FREQ, m_stockConfig.realtimeRefreshFreq);
     pConfig->Write(KEY_CFG_DISPLAY_COLOR, m_stockConfig.isDisplayColor);
     pConfig->Write(KEY_CFG_PRIORITY_DISPLAY_CHANGE, m_stockConfig.isPriorityDisplayChanged);
     pConfig->Write(KEY_CFG_DISPLAY_NAME, m_stockConfig.isDisplayName);
+    pConfig->Write(KEY_CFG_DISPLAY_COST, m_stockConfig.isDisplayCost);
+    pConfig->Write(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, m_stockConfig.isDisplayCostProfitPrice);
+    pConfig->Write(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, m_stockConfig.isDisplayCostProfitPercent);
+    pConfig->Write(KEY_CFG_DISPLAY_ALIAS, m_stockConfig.isDisplayAlias);
+    pConfig->Write(KEY_CFG_SCROLL_ENABLE, m_stockConfig.isScrollEnable);
+    pConfig->Write(KEY_CFG_SCROLL_PAGE_SIZE, m_stockConfig.scrollPageSize);
+    pConfig->Write(KEY_CFG_SCROLL_INTERVAL, m_stockConfig.scrollInterval);
 
     pConfig->Write(KEY_CFG_KLINE_SIZE_W, m_stockConfig.klineW);
     pConfig->Write(KEY_CFG_KLINE_SIZE_H, m_stockConfig.klineH);
@@ -357,10 +623,14 @@ void LDataManager::SaveConfig()
     pConfig->Flush();
 
     g_task->ModifyTaskInterval(TASK_KEY_STOCK_AUTO_REFRESH, RealtimeRefreshFreq() * 1000L);
+    // 用户刚显式改了刷新频率 => 顺手复位闭市退避，让新频率立即生效
+    // （否则若此刻正处于退避档位，max(用户频率, 档位) 会继续用档位压着，看起来像设置没生效）
+    ResetRefreshThrottle();
 }
 
 void LDataManager::AddStock(StockDataPtr data)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     if (data && !data->code.empty())
     {
         m_stock_cache.insert(data);
@@ -369,11 +639,13 @@ void LDataManager::AddStock(StockDataPtr data)
 
 void LDataManager::ClearAllCodes()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     m_stock_cache.clear();
 }
 
 wxVector<StockDataPtr> LDataManager::AllStocks()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     wxVector<StockDataPtr> datas;
 
     m_stock_cache.ForEach(
@@ -390,6 +662,7 @@ wxVector<StockDataPtr> LDataManager::AllStocks()
 
 StockDataPtr LDataManager::GetStockByCode(const wxString &code)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     auto it = m_stock_cache.find(code);
     if (!it)
     {
@@ -400,6 +673,7 @@ StockDataPtr LDataManager::GetStockByCode(const wxString &code)
 
 StockDataPtr LDataManager::GetStockByIndex(WXUINT index)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     auto it = m_stock_cache.indexAt(index);
     if (!it)
     {
@@ -410,16 +684,19 @@ StockDataPtr LDataManager::GetStockByIndex(WXUINT index)
 
 bool LDataManager::DeleteStockByCode(const wxString &code)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     return m_stock_cache.remove(code);
 }
 
 bool LDataManager::SetStockPosition(const StockDataPtr ptr, size_t pos)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     return m_stock_cache.move_to(ptr->code, pos);
 }
 
 bool LDataManager::HandleStockRealtimeData(wxString jsonp)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mtxData);
     if (jsonp.empty())
     {
         LLOG_WARN_F("HandleStockRealtimeData data EMPTY!");
@@ -464,14 +741,114 @@ bool LDataManager::HandleStockRealtimeData(wxString jsonp)
     return true;
 }
 
+void LDataManager::UpdateRefreshThrottle(const std::string &quoteSignature)
+{
+    // 本函数由实时刷新工作线程调用（一次性 INIT_LOAD 任务与周期任务共用同一个回调，可能并发），
+    // 状态由 m_mtxRefreshThrottle 保护。
+    // 绝不能把异常抛回 TaskWorkThread：TaskManager 一捕获到异常就会把任务标成 m_bHasError
+    // 并永久跳过它的调度，实时刷新会彻底停摆（见 TaskManager.cpp TaskWorkThread/TaskAutoResetFlag）。
+    try
+    {
+        const long freqSec = RealtimeRefreshFreq();
+        const unsigned int userMs = static_cast<unsigned int>(freqSec > 0 ? freqSec : 1) * 1000U;
+
+        // 加锁顺序：先取自选列表（内部取 m_mtxData），再取 m_mtxRefreshThrottle。
+        // 全文件只有这一处同时碰两把锁，保持「先 m_mtxData 后 m_mtxRefreshThrottle」这一种顺序即可避免死锁。
+        SYSTEMTIME beijing{};
+        GetBeijingTime(beijing);
+        const RefreshProbe *probe = ActiveProbe(WatchlistGroupMask(), beijing);
+
+        unsigned int nextMs = userMs;
+        size_t nextLevel = 0;
+        bool needApply = false;
+
+        {
+            std::lock_guard<std::mutex> lock(m_mtxRefreshThrottle);
+
+            // 首轮没有可比对的基线，视为「有变化」，先按用户频率跑起来
+            const bool changed = !m_refreshHasLast || quoteSignature != m_refreshLastSignature;
+            m_refreshLastSignature = quoteSignature;
+            m_refreshHasLast = true;
+
+            if (changed || probe != nullptr)
+            {
+                // 行情在动（或到了开盘前窗口）=> 立刻回到用户设定的频率
+                m_refreshBackoffLevel = 0;
+                m_refreshStillRounds = 0;
+            }
+            else if (++m_refreshStillRounds >= REFRESH_STILL_ROUNDS)
+            {
+                m_refreshStillRounds = 0;
+                if (m_refreshBackoffLevel + 1 < REFRESH_BACKOFF_LEVELS)
+                {
+                    ++m_refreshBackoffLevel;
+                }
+            }
+
+            nextLevel = m_refreshBackoffLevel;
+            const unsigned int levelMs = REFRESH_BACKOFF_SECS[m_refreshBackoffLevel] * 1000U;
+            nextMs = levelMs > userMs ? levelMs : userMs;
+
+            // 只在间隔真的变了的时候才去动任务表：否则每轮都要抢一次任务锁、还会刷一条重复日志
+            if (nextMs != m_refreshAppliedMs)
+            {
+                m_refreshAppliedMs = nextMs;
+                needApply = true;
+            }
+        }
+
+        if (needApply)
+        {
+            g_task->ModifyTaskInterval(TASK_KEY_STOCK_AUTO_REFRESH, nextMs);
+
+            // 日志只打「间隔发生变化」，正常盘中不会刷屏
+            if (probe != nullptr)
+            {
+                LLOG_INFO_F("Refresh probe window: %s -> interval %u ms", probe->label, nextMs);
+            }
+            else if (nextLevel == 0)
+            {
+                LLOG_INFO_F("Refresh interval reset -> %u ms", nextMs);
+            }
+            else
+            {
+                LLOG_INFO_F("Refresh backoff level %u -> interval %u ms", static_cast<unsigned int>(nextLevel), nextMs);
+            }
+        }
+    }
+    catch (...)
+    {
+        LLOG_ERROR("UpdateRefreshThrottle: exception, interval unchanged (%d)", 0);
+    }
+}
+
+void LDataManager::ResetRefreshThrottle()
+{
+    std::lock_guard<std::mutex> lock(m_mtxRefreshThrottle);
+    m_refreshBackoffLevel = 0;
+    m_refreshStillRounds = 0;
+    m_refreshHasLast = false;
+    m_refreshLastSignature.clear();
+    // 置 0 = 未知：下一轮刷新会重新下发一次间隔，把「期间别人直接改过任务间隔」也一并纠正掉
+    m_refreshAppliedMs = 0;
+}
+
 void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, const std::string &data)
 {
     wxLogDebug("OnRefreshStockTimelineData: %s", data.c_str());
+
+    // 注意：本函数所有提前返回的分支都必须回调一次空响应，
+    // 否则 JS 侧的 loading 状态永远不会结束（弹窗一直显示「加载中」）
+    auto replyEmpty = [&callback_id]()
+    {
+        LStockServerSocket::GetInstance().GetBridge()->BridgeSendDataWithCallback(callback_id, "{}");
+    };
 
     yyjson_doc *doc = yyjson_read(data.c_str(), data.size(), 0);
     if (doc == nullptr)
     {
         wxLogDebug("OnRefreshStockTimelineData: json parse error!");
+        replyEmpty();
         return;
     }
     yyjson_val *root = yyjson_doc_get_root(doc);
@@ -479,6 +856,7 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
     {
         wxLogDebug("OnRefreshStockTimelineData: root");
         yyjson_doc_free(doc);
+        replyEmpty();
         return;
     }
 
@@ -490,6 +868,7 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
     default:
         wxLogDebug("OnRefreshStockTimelineData: not support %d", type);
         yyjson_doc_free(doc);
+        replyEmpty();
         return;
     }
 
@@ -746,6 +1125,19 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
                 //         T5_URL: "http://stock2.finance.sina.com.cn/futures/api/jsonp.php/$cb=/InnerFuturesNewService.getFourDaysLine?symbol=$symbol",
                 //         TRADING_DATES_URL: c
                 //     },
+                // 国内期货（上期所/大商所/郑商所/中金所/能源中心）。
+                // 与 US 分支同理：jsonp 回调名必须写进 path（$cb 在 path 上，不能用 ?callback=），
+                // 且 symbol 必须去掉 nf_ 前缀 —— 否则接口返回 var t1=(null)
+                {
+                    wxString symbol = UtilStringHlp::remove(stock->code, "nf_");
+                    url_prefix = wxT("https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1") + symbol + wxT("=/InnerFuturesNewService.getMinLine?");
+
+                    params.push_back(L"symbol=" + symbol);
+
+                    // /*<script>location.href='//sina.com';</script>*/
+                    // var t1=([["21:00","3107.000","3106.825","18220","1598337","3108.000","2026-09-14"],["21:01",...],...]);
+                    // 每行: [时间, 价格, 均价, 分钟量, 累计量, 首行额外字段..., 日期]
+                }
                 break;
             case MarketType::MarketType_GOODS:
                 //     GOODS: {
@@ -794,6 +1186,14 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
                 //         T5_URL: "http://stock2.finance.sina.com.cn/futures/api/jsonp.php/$cb=/InnerFuturesNewService.getFourDaysLine?symbol=$symbol",
                 //         TRADING_DATES_URL: c
                 //     },
+                // 中金所（CFF_RE_XXX，如 CFF_RE_IF0）。接口与 NF 完全一致，
+                // 只是 code 前缀换成 CFF_RE_，symbol 同样要去前缀（CFF_RE_IF0 -> IF0）
+                {
+                    wxString symbol = UtilStringHlp::remove(stock->code, "CFF_RE_");
+                    url_prefix = wxT("https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t1") + symbol + wxT("=/InnerFuturesNewService.getMinLine?");
+
+                    params.push_back(L"symbol=" + symbol);
+                }
                 break;
             case MarketType::MarketType_MSCI:
                 //     MSCI: {
@@ -808,7 +1208,11 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
 
             if (url_prefix.empty())
             {
-                LLOG_WARN_F("not support");
+                // 该市场尚未配置分时接口。这里必须回一次空响应：
+                // JS 侧只有 native_response 会把 loading 标志置回 false，
+                // 静默 return 会让弹窗永远停在「加载中」
+                LLOG_WARN_F("OnRefreshStockTimelineData not support market: %s", code.c_str());
+                LStockServerSocket::GetInstance().GetBridge()->BridgeSendDataWithCallback(callback_id, "{}");
                 return;
             }
 
@@ -824,6 +1228,12 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
 
                 LStockServerSocket::GetInstance().GetBridge()->BridgeSendDataWithCallback(callback_id, stock->GetBridgData(type).ToStdString());
             }
+            else
+            {
+                // 接口拉取失败也必须回调，否则同样会卡在「加载中」
+                LLOG_WARN_F("OnRefreshStockTimelineData GetURL failed: %s", url.ToUTF8().data());
+                replyEmpty();
+            }
         }
         else
         {
@@ -832,7 +1242,8 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
     }
     else
     {
-        wxLogDebug("OnRefreshStockTimelineData: not found stock %s", code);
+        wxLogDebug("OnRefreshStockTimelineData: not found stock %s", code.c_str());
+        replyEmpty();
     }
 
     yyjson_doc_free(doc);

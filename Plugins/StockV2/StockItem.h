@@ -3,11 +3,14 @@
 class LStockItem : public IPluginItem
 {
 public:
-    int index;
+    int index;      // 当前显示的股票在列表中的下标（滚动模式下会变化）
+    int slotIndex;  // 显示槽位下标（固定不变，用于生成稳定的 GetItemId）
     bool enable;
 
 private:
     CString GetDisplayContent(wxSharedPtr<STOCK::LStockData> data, bool include_name) const;
+    CString GetCostLabelContent(wxSharedPtr<STOCK::LStockData> data) const;
+    CString GetCostDirContent(wxSharedPtr<STOCK::LStockData> data) const;
 
 public:
     /**

@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "TransparentWnd.h"
 #include "FloatingWnd.h"
 #include <Stock.h>

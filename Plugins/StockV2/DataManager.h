@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "pch.h"
 #include <wx/sharedptr.h>
+#include <mutex>
 #include "StockDef.h"
 
 #define g_data LDataManager::Instance()
@@ -27,6 +28,10 @@ constexpr unsigned int DEFAULT_DECIMAL_PLACES = 2;
 constexpr unsigned int MAX_DECIMAL_PLACES = 10;
 // 最小小数点有效位数
 constexpr unsigned int MIN_DECIMAL_PLACES = 0;
+// 默认滚动显示每页数量
+constexpr int DEFAULT_SCROLL_PAGE_SIZE = 2;
+// 默认滚动间隔（秒）
+constexpr int DEFAULT_SCROLL_INTERVAL = 5;
 
 using namespace STOCK;
 
@@ -151,7 +156,7 @@ namespace {
         template<typename Func>
         void ForEach(Func func) const
         {
-            for (const auto&& item : data_)
+            for (const auto &item : data_)
                 func(item->first, item->second);
         }
 
@@ -184,6 +189,22 @@ public:
     void IsDisplayRightAlign(bool flag);
     bool IsPriorityDisplayChanged() const;
     void IsPriorityDisplayChanged(bool flag);
+    bool IsDisplayCost() const;
+    void IsDisplayCost(bool flag);
+    bool IsDisplayCostProfitPrice() const;
+    void IsDisplayCostProfitPrice(bool flag);
+    bool IsDisplayCostProfitPercent() const;
+    void IsDisplayCostProfitPercent(bool flag);
+    bool IsDisplayAlias() const;
+    void IsDisplayAlias(bool flag);
+    bool IsScrollEnable() const;
+    void IsScrollEnable(bool flag);
+    int ScrollPageSize() const;
+    void ScrollPageSize(int num);
+    int ScrollInterval() const;
+    void ScrollInterval(int num);
+    // 是否存在设置了成本价的股票
+    bool HasStockWithCostPrice() const;
     void KLineWH(int w, int h);
     void KLineW(int w);
     int KLineW() const;
@@ -204,6 +225,14 @@ public:
     void ClearAllCodes();
     void AddStock(StockDataPtr data);
     bool HandleStockRealtimeData(wxString jsonp);
+
+    // 闭市退避：按本轮行情「是否变化」决定下一次实时刷新的间隔。
+    // 连续多轮行情完全不变 => 判定闭市，逐档拉长间隔（30/60/120/300 秒，不低于用户设定频率）；
+    // 一旦变化、或命中「开盘前探针」窗口 => 立即恢复用户频率，保证开盘秒级响应。
+    // quoteSignature 传本轮实时行情的原始响应文本（只做逐字节比较，不需要解析、也不做编码转换）。
+    void UpdateRefreshThrottle(const std::string &quoteSignature);
+    // 复位闭市退避（用户显式改了刷新频率时调用，否则新频率会被退避档位压着）
+    void ResetRefreshThrottle();
 
     StockDataPtr GetStockByCode(const wxString& code);
     StockDataPtr GetStockByIndex(WXUINT index);
@@ -228,6 +257,20 @@ private:
         bool isDisplayColor;
         // 是否优先显示变动
         bool isPriorityDisplayChanged;
+        // 是否显示成本价
+        bool isDisplayCost;
+        // 是否显示价差（当前价-成本价）
+        bool isDisplayCostProfitPrice;
+        // 是否显示盈亏涨跌幅
+        bool isDisplayCostProfitPercent;
+        // 是否显示别名（以股票代码代替名称）
+        bool isDisplayAlias;
+        // 是否开启滚动显示
+        bool isScrollEnable;
+        // 滚动显示每页数量
+        int scrollPageSize;
+        // 滚动间隔（秒）
+        int scrollInterval;
         int klineW;
         int klineH;
         // 小数点位数
@@ -244,6 +287,26 @@ private:
     bool m_isDisplayRightAlign;
 
     LStockCacheManager m_stock_cache;
+    // 保护 m_stock_cache（wxVector + 哈希索引）与 m_stockConfig.datas 的互斥锁。
+    // 两者会被 UI 线程（增删改/遍历）、实时刷新工作线程（HandleStockRealtimeData/GetAllCodes）、
+    // socket 工作线程（GetStockByCode）并发访问；insert/remove/move_to 会重建哈希索引，
+    // 与并发 find/遍历竞争会损坏哈希表。
+    mutable std::recursive_mutex m_mtxData;
+
+    // ---- 闭市退避状态（只被 UpdateRefreshThrottle / ResetRefreshThrottle 访问）----
+    // 实时刷新任务与一次性 INIT_LOAD 任务用的是同一个回调，理论上可能并发进入，故单独加锁。
+    // 注意加锁顺序：本锁必须在 m_mtxData 之后取（UpdateRefreshThrottle 里先取完自选再加本锁）。
+    std::mutex m_mtxRefreshThrottle;
+    // 当前退避档位（下标，见 REFRESH_BACKOFF_SECS）
+    size_t m_refreshBackoffLevel{0};
+    // 连续「行情无变化」的轮数，累计到阈值就升一档
+    int m_refreshStillRounds{0};
+    // 是否已有可比对的上一轮行情
+    bool m_refreshHasLast{false};
+    // 上一轮行情的原始响应文本（用它当「有没有在动」的判据，不解析字段）
+    std::string m_refreshLastSignature;
+    // 最近一次实际下发到任务的间隔（0 = 未知，需重下发），避免每轮都去动任务表
+    unsigned int m_refreshAppliedMs{0};
     //wxVector<wxSharedPtr<LStockData>> m_cacheStocks;
     //StockDataMap m_cacheStockMap;
 };
