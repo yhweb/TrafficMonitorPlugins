@@ -12,6 +12,7 @@ public:
     {
         std::string app_key;
         std::string api_host;
+        std::string developer_id;
         std::string project_id;
         std::string credential_id;
         std::string jwt_pub_key_file;
@@ -27,10 +28,16 @@ public:
         bool show_realtime_wind{ true };
         bool show_realtime_wind_scale{ true };
         bool show_realtime_humidity{ true };
+        bool show_realtime_uvi{ true };
+        bool show_realtime_percipitation{ true };
         bool show_realtime_pm2p5{ true };
         bool show_realtime_pm10{ false };
         bool show_forecasted_uv_index{ false };
         bool show_forecasted_humidity{ false };
+        bool show_forecasted_wind{ false };
+        bool show_forecasted_wind_scale{ true };
+        bool show_forecasted_precipitation{ false };
+        bool show_forecasted_day_night_details{ false };
 
         bool operator==(const ConfigFormatting&) const = default;
     };
@@ -45,19 +52,35 @@ public:
         std::string wind_scale;
         std::string wind_speed;
         std::string humidity;
+        std::string precipitation_amount;
+        std::string precipitation_intensity;
+        std::string precipitation_type;
+        std::string uv_index;
         std::string update_time;
     };
 
     struct ForecastedWeather
     {
+        struct DataBlock
+        {
+            std::string weather_text;
+            std::string weather_code;
+            std::string temp_max;
+            std::string temp_min;
+            std::string humidity;
+            std::string wind_direction;
+            std::string wind_speed;
+            std::string wind_scale;
+            std::string precipitation_amount;
+            std::string precipitation_type;
+            std::string precipitation_prob;
+        };
+
         std::string temp_max;
         std::string temp_min;
-        std::string weather_day;
-        std::string weather_night;
-        std::string code_day;
-        std::string code_night;
         std::string uv_index;
-        std::string humidity;
+        DataBlock day_time;
+        DataBlock night_time;
     };
 
     struct AirQualityIndex

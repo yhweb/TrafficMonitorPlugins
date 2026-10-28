@@ -1,5 +1,4 @@
 ﻿#include "DataProviderQWeather.h"
-#include "Logger.h"
 #include "utils.h"
 #include "AppLocale.h"
 #include "JsonValueHelper.h"
@@ -14,6 +13,7 @@
 #include <mutex>
 
 #include <jwt-cpp/jwt.h>
+#include <spdlog/spdlog.h>
 #include <yyjson.h>
 
 namespace
@@ -48,24 +48,25 @@ namespace
 
             ifs.close();
         } else {
-            Logger::instance().error(tr::txt(tr::TID::ERR_JWT_CANNOT_OPEN_PRV_FILE));
+            spdlog::error(tr::txt(tr::TID::ERR_JWT_CANNOT_OPEN_PRV_FILE));
             return {};
         }
 
         try {
             auto token = jwt::create()
+                .set_algorithm("EdDSA")
+                .set_key_id(cfg.credential_id)
+                .set_issuer(cfg.developer_id)
+                .set_subject(cfg.project_id)
                 .set_issued_at(now - JWT_TIME_OFFSET)
                 .set_expires_at(now + JWT_TIME_DURATION)
-                .set_subject(cfg.project_id)
-                .set_header_claim("kid", jwt::claim(cfg.credential_id))
                 .sign(jwt::algorithm::ed25519("", private_key));
 
             timestamp = now;
-            token_cache = token;
+            token_cache = std::move(token);
         }
         catch (const std::exception &e) {
-            Logger::instance().error(e.what());
-
+            spdlog::error(e.what());
             token_cache.clear();
         }
 
@@ -81,30 +82,52 @@ namespace
         return std::format("[{}] {} ({})", status, title, detail);
     }
 
-    std::string timestamp_string_hhmm(std::int64_t sec) {
-        using namespace std::chrono;
-
-        const auto tp = sys_seconds{ seconds{sec} };
-        const auto day_time = tp - floor<days>(tp);
-        return std::format("{:%R}", hh_mm_ss{ day_time });
-    }
-
     std::string timestamp_string_yyyymmdd_hhmm(std::int64_t sec) {
         using namespace std::chrono;
 
         return std::format("{:%F %R}", sys_seconds{ seconds{sec} });
     }
 
-    bool queryFrame(const std::string &path, const utils::HttpParams &params,
-                    const DataProviderQWeather::ConfigApp &cfg,
+    std::string parseValueUnit(yyjson_val *j_parent, const char *key, int p = 1) {
+        auto *j_obj = yyjson_obj_get(j_parent, key);
+
+        p = std::clamp(p, 0, 4);
+
+        const auto fmt_str = std::format("{{:.{}f}}{{}}", p);
+        const auto value = jvh::getNumber(j_obj, "value");
+        const auto unit = jvh::getStringView(j_obj, "unit");
+        return std::vformat(fmt_str, std::make_format_args(value, unit));
+    }
+
+    std::string formatWind(const std::string_view direction,
+                           const std::string_view speed,
+                           const std::string_view scale,
+                           const bool use_scale) {
+        auto wind_direction =
+            std::vformat(tr::txt(tr::TID::FMT_TMP_WIND_DIRECTION),
+                         std::make_format_args(direction));
+        auto wind_strength = use_scale ?
+            std::vformat(tr::txt(tr::TID::FMT_TMP_WIND_SCALE),
+                         std::make_format_args(scale)) :
+            std::string{ speed };
+        return std::format("{} {}", wind_direction, wind_strength);
+    }
+
+    using ConfigApp = DataProviderQWeather::ConfigApp;
+    using RealtimeWeather = DataProviderQWeather::RealtimeWeather;
+    using ForecastedWeather = DataProviderQWeather::ForecastedWeather;
+    using AirQualityIndex = DataProviderQWeather::AirQualityIndex;
+    using RealtimeAirQuality = DataProviderQWeather::RealtimeAirQuality;
+    using WeatherAlert = DataProviderQWeather::WeatherAlert;
+    using RealtimeWeatherAlerts = DataProviderQWeather::RealtimeWeatherAlerts;
+
+    bool queryFrame(const std::string &path, utils::HttpParams &params,
+                    const ConfigApp &cfg,
                     const std::function<void(yyjson_val*)> &func)
     {
         bool succeed{ false };
 
-        utils::HttpParams http_params;
-        http_params.data.insert(params.data.begin(), params.data.end());
-
-        utils::HttpHeaders http_headers;
+        utils::HttpHeaders headers;
 
         if (cfg.enable_jwt) {
             auto jwt = generateJwt(cfg);
@@ -112,20 +135,21 @@ namespace
                 return false;
             }
 
-            http_headers.data.emplace("Authorization", std::format("Bearer {}", jwt));
+            headers.data.emplace("Authorization", std::format("Bearer {}", jwt));
         } else {
-            http_params.data.emplace("key", cfg.app_key);
+            params.data.emplace("key", cfg.app_key);
         }
 
-        //auto lang = std::string{ tr::txt(tr::TID::LC_QWEATHER) };
-        http_params.data.emplace("lang", tr::txt(tr::TID::LC_QWEATHER));
+        params.data.emplace("lang", tr::txt(tr::TID::LC_QWEATHER));
 
         const auto host = std::format("https://{}", cfg.api_host);
         std::string content;
 
-        auto status_code = utils::internetGetWithRetry(host, path, content, http_params, http_headers);
+        auto status_code = utils::internetGetWithRetry(host, path, content, params, headers);
 
         if (!content.empty()) {
+            SPDLOG_DEBUG(content);
+
             std::unique_ptr<yyjson_doc, void(*)(yyjson_doc*)> doc(
                 yyjson_read(content.c_str(), content.size(), 0),
                 [](yyjson_doc *p) { yyjson_doc_free(p); }
@@ -137,8 +161,7 @@ namespace
                 if (status_code == 200) {
                     // compatible with error code v1
                     if (jvh::hasObject(root, "code") && jvh::getString(root, "code") != "200") {
-                        Logger::instance().error(
-                            std::format("{}: {}", tr::txt(tr::TID::ERR_CODE), jvh::getString(root, "code")));
+                        spdlog::error("{}: {}", tr::txt(tr::TID::ERR_CODE), jvh::getString(root, "code"));
                     } else {
                         func(root);
                         succeed = true;
@@ -146,64 +169,82 @@ namespace
                 } else {
                     // compatible with error code v2
                     if (jvh::hasObject(root, "error")) {
-                        Logger::instance().error(formatErrorV2(yyjson_obj_get(root, "error")));
+                        spdlog::error(formatErrorV2(yyjson_obj_get(root, "error")));
                     } else
-                        Logger::instance().error(
-                            std::format("[{}] {}", status_code, tr::txt(tr::TID::ERR_UNKOWN)));
+                        spdlog::error("[{}] {}", status_code, tr::txt(tr::TID::ERR_UNKOWN));
                 }
             } else
-                Logger::instance().error(tr::txt(tr::TID::ERR_INVALID_JSON));
+                spdlog::error(tr::txt(tr::TID::ERR_INVALID_JSON));
         } else
-            Logger::instance().error(std::format("[{}] {}", status_code, tr::txt(tr::TID::ERR_INTERNET_EMPTY_RESPONSE)));
+            spdlog::error(std::format("[{}] {}", status_code, tr::txt(tr::TID::ERR_INTERNET_EMPTY_RESPONSE)));
 
         return succeed;
     }
 
-    DataProviderQWeather::RealtimeWeather queryRealtimeWeather(const Location &loc, const DataProviderQWeather::ConfigApp &cfg) {
-        constexpr std::string_view url_path{ "/v7/weather/now" };
+    RealtimeWeather queryRealtimeWeather(const Location &loc, const ConfigApp &cfg) {
+        RealtimeWeather rt_weather{};
 
-        DataProviderQWeather::RealtimeWeather rt_weather{};
-
-        std::string query;
-        if (!loc.latitude.empty() && !loc.longitude.empty()) {
-            query = std::format("{},{}", loc.longitude, loc.latitude);
-        } else {
-            query = loc.id;
+        if (loc.longitude.empty() || loc.latitude.empty()) {
+            spdlog::error("{} (queryRealtimeWeather)", tr::txt(tr::TID::ERR_NO_LONG_LAT));
+            return rt_weather;
         }
 
-        utils::HttpParams url_params;
-        url_params.data.emplace("location", query);
+        const auto url_path = std::format("/weather/v1/current/{}/{}",
+                                          loc.latitude, loc.longitude);
 
-        auto func = [&rt_weather](yyjson_val *j_val) {
-            auto *now_obj = yyjson_obj_get(j_val, "now");
+        auto parse_func = [&rt_weather](yyjson_val *j_root) {
+            // temperature
+            rt_weather.temp = parseValueUnit(j_root, "temperature");
+            rt_weather.temp_feels_like = parseValueUnit(j_root, "feelsLike");
+            
+            // update time
+            {
+                auto now = std::chrono::floor<std::chrono::minutes>(
+                    std::chrono::current_zone()->to_local(std::chrono::system_clock::now()));
+                rt_weather.update_time = std::format("{:%H:%M}", now);
+            }
 
-            rt_weather.temp = jvh::getString(now_obj, "temp");
-            rt_weather.temp_feels_like = jvh::getString(now_obj, "feelsLike");
-            rt_weather.update_time = timestamp_string_hhmm(
-                utils::parse_iso_datetime_to_local_seconds(
-                    jvh::getString(now_obj, "obsTime")
-                )
-            );
-            rt_weather.weather_text = jvh::getString(now_obj, "text");
-            rt_weather.weather_code = jvh::getString(now_obj, "icon");
-            rt_weather.wind_direction = jvh::getString(now_obj, "windDir");
-            rt_weather.wind_scale = jvh::getString(now_obj, "windScale");
-            rt_weather.wind_speed = jvh::getString(now_obj, "windSpeed");
-            rt_weather.humidity = jvh::getString(now_obj, "humidity");
+            // weather condition
+            auto *j_weather = yyjson_obj_get(j_root, "condition");
+            rt_weather.weather_text = jvh::getStringView(j_weather, "text");
+            rt_weather.weather_code = jvh::getStringView(j_weather, "code");
+
+            // wind
+            auto *j_wind = yyjson_obj_get(j_root, "wind");
+            auto *j_wind_direction = yyjson_obj_get(j_wind, "direction");
+            rt_weather.wind_direction = utils::get_direction_text(jvh::getStringView(j_wind_direction, "compass"));
+            rt_weather.wind_speed = parseValueUnit(j_wind, "speed", 2);
+            rt_weather.wind_scale = std::to_string(jvh::getInt(j_wind, "scale"));
+
+            // humidity
+            rt_weather.humidity = std::format("{:.0f}%", jvh::getReal(j_root, "humidity") * 100.0);
+
+            // precipitation
+            auto *j_precipitation = yyjson_obj_get(j_root, "precipitation");
+
+            rt_weather.precipitation_type = jvh::getStringView(j_precipitation, "type");
+            if (rt_weather.precipitation_type != "none") {
+                rt_weather.precipitation_amount = parseValueUnit(j_precipitation, "amount", 2);
+                rt_weather.precipitation_intensity = parseValueUnit(j_precipitation, "intensity", 2);
+            }
+
+            // uv index
+            rt_weather.uv_index = std::to_string(jvh::getInt(j_root, "uvIndex"));
         };
 
-        if (!queryFrame(std::string{ url_path }, url_params, cfg, func)) {
-            Logger::instance().error(tr::txt(tr::TID::ERR_QUERY_RTW_FAILED));
+        if (utils::HttpParams empty_params;
+            !queryFrame(url_path, empty_params, cfg, parse_func)) {
+            spdlog::error(tr::txt(tr::TID::ERR_QUERY_RTW_FAILED));
         }
 
         return rt_weather;
     }
 
-    DataProviderQWeather::RealtimeAirQuality queryRealtimeAirQuality(const Location &loc, const DataProviderQWeather::ConfigApp &cfg) {
-        DataProviderQWeather::RealtimeAirQuality rt_air{};
+    RealtimeAirQuality queryRealtimeAirQuality(const Location &loc, const ConfigApp &cfg) {
+        RealtimeAirQuality rt_air{};
 
         if (loc.longitude.empty() || loc.latitude.empty()) {
-            Logger::instance().error(std::format("{} (queryRealtimeAirQuality)", tr::txt(tr::TID::ERR_NO_LONG_LAT)));
+            spdlog::error("{} (queryRealtimeAirQuality)", tr::txt(tr::TID::ERR_NO_LONG_LAT));
             return rt_air;
         }
 
@@ -217,7 +258,7 @@ namespace
                 yyjson_val *j_aqi_index;
                 yyjson_arr_foreach(j_arr_indexes, idx, max, j_aqi_index) {
                     rt_air.indexes.push_back(
-                        DataProviderQWeather::AirQualityIndex{
+                        AirQualityIndex{
                             .code = jvh::getString(j_aqi_index, "code"),
                             .name = jvh::getString(j_aqi_index, "name"),
                             .aqi = jvh::getString(j_aqi_index, "aqiDisplay"),
@@ -227,82 +268,111 @@ namespace
                 }
             }
 
-            auto extractPollutantConcentration = [](yyjson_val *j_val_pc, std::string &str_concentration) {
-                auto *j_concentration = yyjson_obj_get(j_val_pc, "concentration");
-                str_concentration = std::format("{:.2f}{}", 
-                                                jvh::getNumber(j_concentration, "value"),
-                                                jvh::getString(j_concentration, "unit"));
-            };
-
             {
                 auto *j_arr_pollutants = yyjson_obj_get(j_val, "pollutants");
 
                 size_t idx, max;
                 yyjson_val *j_pollutant;
                 yyjson_arr_foreach(j_arr_pollutants, idx, max, j_pollutant) {
-                    if (auto code = jvh::getString(j_pollutant, "code");
-                        code == "pm2p5") {
-                        extractPollutantConcentration(j_pollutant, rt_air.pm2p5);
-                        } else if (code == "pm10") {
-                            extractPollutantConcentration(j_pollutant, rt_air.pm10);
-                        }
+                    const auto code = jvh::getStringView(j_pollutant, "code");
+                    if (code == "pm2p5") {
+                        rt_air.pm2p5 = parseValueUnit(j_pollutant, "concentration", 2);
+                    }
+                    
+                    if (code == "pm10") {
+                        rt_air.pm10 = parseValueUnit(j_pollutant, "concentration", 2);
+                    }
                 }
             }
         };
 
-        if (!queryFrame(url_path, utils::HttpParams{}, cfg, func)) {
-            Logger::instance().error(tr::txt(tr::TID::ERR_QUERY_RTAQ_FAILED));
+        if (utils::HttpParams empty_params;
+            !queryFrame(url_path, empty_params, cfg, func)) {
+            spdlog::error(tr::txt(tr::TID::ERR_QUERY_RTAQ_FAILED));
         }
 
         return rt_air;
     }
 
-    std::array<DataProviderQWeather::ForecastedWeather, 3> queryForcastedWeather3d(const Location &loc, const DataProviderQWeather::ConfigApp &cfg) {
-        constexpr std::string_view url_path{ "/v7/weather/3d" };
+    std::array<ForecastedWeather, 3> queryForcastedWeather3d(const Location &loc, const ConfigApp &cfg) {
+        std::array<ForecastedWeather, 3> fc_weather_3d{};
 
-        std::array<DataProviderQWeather::ForecastedWeather, 3> fc_weather_3d{};
-
-        std::string query;
-        if (!loc.latitude.empty() && !loc.longitude.empty()) {
-            query = std::format("{},{}", loc.longitude, loc.latitude);
-        } else {
-            query = loc.id;
+        if (loc.longitude.empty() || loc.latitude.empty()) {
+            spdlog::error("{} (queryForcastedWeather3d)", tr::txt(tr::TID::ERR_NO_LONG_LAT));
+            return fc_weather_3d;
         }
 
-        utils::HttpParams url_params;
-        url_params.data.emplace("location", query);
+        const auto url_path = std::format("/weather/v1/daily/{}/{}", loc.latitude, loc.longitude);
 
-        auto func = [&fc_weather_3d](yyjson_val *j_val) {
-            auto *daily_arr = yyjson_obj_get(j_val, "daily");
+        auto parse_func = [&fc_weather_3d](yyjson_val *j_root) {
+            auto parse_daily_data = [](yyjson_val *j_daily_data, ForecastedWeather &fc_weather) {
+                // temperature
+                fc_weather.temp_max = parseValueUnit(j_daily_data, "temperatureMax");
+                fc_weather.temp_min = parseValueUnit(j_daily_data, "temperatureMin");
 
-            auto getDailyInfo = [](yyjson_val *j_val_day, DataProviderQWeather::ForecastedWeather &w) {
-                w.temp_max = jvh::getString(j_val_day, "tempMax");
-                w.temp_min = jvh::getString(j_val_day, "tempMin");
-                w.weather_day = jvh::getString(j_val_day, "textDay");
-                w.weather_night = jvh::getString(j_val_day, "textNight");
-                w.code_day = jvh::getString(j_val_day, "iconDay");
-                w.code_night = jvh::getString(j_val_day, "iconNight");
-                w.uv_index = jvh::getString(j_val_day, "uvIndex");
-                w.humidity = jvh::getString(j_val_day, "humidity");
+                // uv index
+                fc_weather.uv_index = std::to_string(jvh::getInt(j_daily_data, "uvIndexMax"));
+
+                auto parse_data_block = [](yyjson_val *j_block, ForecastedWeather::DataBlock &data_block) {
+                    // temperature
+                    data_block.temp_max = parseValueUnit(j_block, "temperatureMax");
+                    data_block.temp_min = parseValueUnit(j_block, "temperatureMin");
+
+                    // weather
+                    auto *j_weather = yyjson_obj_get(j_block, "condition");
+                    data_block.weather_text = jvh::getStringView(j_weather, "text");
+                    data_block.weather_code = jvh::getStringView(j_weather, "code");
+
+                    // humidity
+                    data_block.humidity = std::format("{:.0f}%", jvh::getReal(j_block, "humidity") * 100.0);
+
+                    // wind
+                    auto *j_wind = yyjson_obj_get(j_block, "wind");
+                    auto *j_wind_direction = yyjson_obj_get(j_wind, "direction");
+                    data_block.wind_direction = utils::get_direction_text(jvh::getStringView(j_wind_direction, "compass"));
+                    data_block.wind_speed = parseValueUnit(j_wind, "speed");
+                    data_block.wind_scale = std::to_string(jvh::getInt(j_wind, "scale"));
+
+                    // precipitation
+                    auto *j_precipitation = yyjson_obj_get(j_block, "precipitation");
+                    data_block.precipitation_type = jvh::getStringView(j_precipitation, "type");
+                    if (data_block.precipitation_type != "none") {
+                        data_block.precipitation_amount = parseValueUnit(j_precipitation, "amount", 2);
+                        data_block.precipitation_prob = std::format("{:.0f}%", jvh::getReal(j_precipitation, "probability") * 100.0);
+                    }
+                };
+
+                // day time
+                auto *j_day = yyjson_obj_get(j_daily_data, "daytime");
+                parse_data_block(j_day, fc_weather.day_time);
+
+                // night time
+                auto *j_night = yyjson_obj_get(j_daily_data, "nighttime");
+                parse_data_block(j_night, fc_weather.night_time);
             };
 
-            getDailyInfo(yyjson_arr_get(daily_arr, 0), fc_weather_3d[0]);
-            getDailyInfo(yyjson_arr_get(daily_arr, 1), fc_weather_3d[1]);
-            getDailyInfo(yyjson_arr_get(daily_arr, 2), fc_weather_3d[2]);
+            auto *j_arr_days = yyjson_obj_get(j_root, "days");
+            const auto num_days = std::min(yyjson_arr_size(j_arr_days), fc_weather_3d.size());
+            for (size_t i = 0; i < num_days; ++i) {
+                parse_daily_data(yyjson_arr_get(j_arr_days, i), fc_weather_3d[i]);
+            }
         };
 
-        if (!queryFrame(std::string{ url_path }, url_params, cfg, func)) {
-            Logger::instance().error(tr::txt(tr::TID::ERR_QUERY_FCW3D_FAILED));
+        utils::HttpParams params;
+        params.data.emplace("days", "3");
+
+        if (!queryFrame(url_path, params, cfg, parse_func)) {
+            spdlog::error(tr::txt(tr::TID::ERR_QUERY_FCW3D_FAILED));
         }
 
         return fc_weather_3d;
     }
 
-    DataProviderQWeather::RealtimeWeatherAlerts queryRealtimeWeatherAlerts(const Location &loc, const DataProviderQWeather::ConfigApp &cfg) {
-        DataProviderQWeather::RealtimeWeatherAlerts rt_alerts{};
+    RealtimeWeatherAlerts queryRealtimeWeatherAlerts(const Location &loc, const ConfigApp &cfg) {
+        RealtimeWeatherAlerts rt_alerts{};
 
         if (loc.longitude.empty() || loc.latitude.empty()) {
-            Logger::instance().error(std::format("{} (queryRealtimeWeatherAlerts)", tr::txt(tr::TID::ERR_NO_LONG_LAT)));
+            spdlog::error("{} (queryRealtimeWeatherAlerts)", tr::txt(tr::TID::ERR_NO_LONG_LAT));
             return rt_alerts;
         }
 
@@ -315,7 +385,7 @@ namespace
             }
 
             auto extractAlertInfo = [](yyjson_val *j_val_alt) {
-                DataProviderQWeather::WeatherAlert wa;
+                WeatherAlert wa;
 
                 wa.sender_name = jvh::getString(j_val_alt, "senderName");
                 wa.issued_time = timestamp_string_yyyymmdd_hhmm(
@@ -368,8 +438,9 @@ namespace
             }
         };
 
-        if (!queryFrame(url_path, utils::HttpParams{}, cfg, func)) {
-            Logger::instance().error(tr::txt(tr::TID::ERR_QUERY_RTWA_FAILED));
+        if (utils::HttpParams empty_params;
+            !queryFrame(url_path, empty_params, cfg, func)) {
+            spdlog::error(tr::txt(tr::TID::ERR_QUERY_RTWA_FAILED));
         }
 
         return rt_alerts;
@@ -444,7 +515,7 @@ namespace
             return true;
         }
 
-        Logger::instance().error(tr::txt(tr::TID::ERR_QUERY_GEOCODING_FAILED));
+        spdlog::error(tr::txt(tr::TID::ERR_QUERY_GEOCODING_FAILED));
         return false;
     }
 }
@@ -462,13 +533,20 @@ std::string DataProviderQWeather::WeatherDataBlock::getWeatherSummary() const {
 
     // wind
     if (cfg.show_realtime_wind) {
-        oss << "\n" << getWeatherItem(WeatherTimeSlot::REALTIME, WeatherItem::WIND);
+        const auto wind = getWeatherItem(WeatherTimeSlot::REALTIME, WeatherItem::WIND);
+        oss << "\n" << std::vformat(tr::txt(tr::TID::FMT_TMP_WIND),
+                                    std::make_format_args(wind));
     }
 
     // humidity
     if (cfg.show_realtime_humidity) {
         oss << std::format(" {}: {}", tr::txt(tr::TID::FMT_HUMIDITY),
                            getWeatherItem(WeatherTimeSlot::REALTIME, WeatherItem::HUMIDITY));
+    }
+
+    // uv index
+    if (cfg.show_realtime_uvi) {
+        oss << std::format(" UVI: {}", getWeatherItem(WeatherTimeSlot::REALTIME, WeatherItem::UV_INDEX));
     }
 
     // air quality
@@ -482,26 +560,85 @@ std::string DataProviderQWeather::WeatherDataBlock::getWeatherSummary() const {
         oss << " PM10: " << getWeatherItem(WeatherTimeSlot::REALTIME, WeatherItem::AIR_PM10);
     }
 
+    // precipitation
+    if (cfg.show_realtime_percipitation) {
+        if (!realtime_weather.precipitation_intensity.empty()) {
+            oss << "\n"
+                << std::format("{}: {}",
+                               tr::txt(tr::TID::FMT_PRECIPITATION_INTENSITY),
+                               getWeatherItem(WeatherTimeSlot::REALTIME, WeatherItem::PRECIPITATION));
+        }
+
+        if (!realtime_weather.precipitation_amount.empty()) {
+            oss << "\n"
+                << std::format("{}: {}",
+                               tr::txt(tr::TID::FMT_PRECIPITATION_IN_1H),
+                               realtime_weather.precipitation_amount);
+        }
+    }
+
     // weather alerts
     for (const auto &alert : weather_alerts.alerts) {
         oss << "\n" << std::format("[!] {} ({})", alert.headline, alert.issued_time);
     }
 
     // forecasted weather
-    auto fcw_formatter = [&oss, &cfg, this](WeatherTimeSlot wt, std::string_view str_wt) {
-        oss << "\n" << str_wt << ": " << getWeatherItem(wt, WeatherItem::WEATHER_TEXT)
-            << " " << getWeatherItem(wt, WeatherItem::TEMPERATURE);
-        if (cfg.show_forecasted_humidity) {
-            oss << " " << tr::txt(tr::TID::FMT_HUMIDITY) << ": " << getWeatherItem(wt, WeatherItem::HUMIDITY);
-        }
-        if (cfg.show_forecasted_uv_index) {
-            oss << " " << tr::txt(tr::TID::FMT_UVI) << ": " << getWeatherItem(wt, WeatherItem::UV_INDEX);
+    auto fcw_formatter = [&oss, &cfg, this](WeatherTimeSlot wt, std::string_view str_wt, const ForecastedWeather &fcw) {
+        oss << "\n" << str_wt << ": ";
+        
+        if (cfg.show_forecasted_day_night_details) {
+            oss << getWeatherItem(wt, WeatherItem::TEMPERATURE);
+            if (cfg.show_forecasted_uv_index) {
+                oss << " " << tr::txt(tr::TID::FMT_UVI) << ": " << getWeatherItem(wt, WeatherItem::UV_INDEX);
+            }
+
+            auto details_formatter = [&oss, &cfg](std::string_view str_time, const ForecastedWeather::DataBlock &data_block)
+            {
+                oss << "\n"
+                    << std::format("[{}] {} {}~{}",
+                                   str_time,
+                                   data_block.weather_text, data_block.temp_min, data_block.temp_max);
+
+                if (cfg.show_forecasted_wind) {
+                    oss << " " << formatWind(data_block.wind_direction, data_block.wind_speed, data_block.wind_scale,
+                                             cfg.show_forecasted_wind_scale);
+                }
+
+                if (cfg.show_forecasted_humidity) {
+                    oss << std::format(" {}: {}", tr::txt(tr::TID::FMT_HUMIDITY), data_block.humidity);
+                }
+
+                if (cfg.show_forecasted_precipitation) {
+                    if (data_block.precipitation_amount.empty()) {
+                        oss << std::format(" {}: {}",
+                                           tr::txt(tr::TID::FMT_PRECIPITATION),
+                                           utils::get_precipitation_text(data_block.precipitation_type));
+                    } else {
+                        oss << std::format(" {}: {} {} {}",
+                                           tr::txt(tr::TID::FMT_PRECIPITATION), 
+                                           data_block.precipitation_prob,
+                                           utils::get_precipitation_text(data_block.precipitation_type),
+                                           data_block.precipitation_amount);
+                    }
+                }
+            };
+
+            // day
+            details_formatter(tr::txt(tr::TID::FMT_DAY_TIME), fcw.day_time);
+            // night
+            details_formatter(tr::txt(tr::TID::FMT_NIGHT_TIME), fcw.night_time);
+        } else {
+            oss << getWeatherItem(wt, WeatherItem::WEATHER_TEXT)
+                << " " << getWeatherItem(wt, WeatherItem::TEMPERATURE);
+            if (cfg.show_forecasted_uv_index) {
+                oss << " " << tr::txt(tr::TID::FMT_UVI) << ": " << getWeatherItem(wt, WeatherItem::UV_INDEX);
+            }
         }
     };
 
-    fcw_formatter(WeatherTimeSlot::TODAY, tr::txt(tr::TID::FMT_TODAY));
-    fcw_formatter(WeatherTimeSlot::TOMMROW, tr::txt(tr::TID::FMT_TOMORROW));
-    fcw_formatter(WeatherTimeSlot::DAY_AFTER_TOMMROW, tr::txt(tr::TID::FMT_DAT_AFTER_TOMORROW));
+    fcw_formatter(WeatherTimeSlot::TODAY, tr::txt(tr::TID::FMT_TODAY), fc_weather_3d[0]);
+    fcw_formatter(WeatherTimeSlot::TOMMROW, tr::txt(tr::TID::FMT_TOMORROW), fc_weather_3d[1]);
+    fcw_formatter(WeatherTimeSlot::DAY_AFTER_TOMMROW, tr::txt(tr::TID::FMT_DAT_AFTER_TOMORROW), fc_weather_3d[2]);
 
     oss << "\n";
 
@@ -514,16 +651,16 @@ std::string DataProviderQWeather::WeatherDataBlock::getWeatherItem(WeatherTimeSl
     if (time_slot == WeatherTimeSlot::REALTIME) {
         if (item == WeatherItem::TEMPERATURE) {
             if (cfg.show_realtime_temp_feels_like) {
-                return std::format("{}℃", realtime_weather.temp_feels_like);
+                return realtime_weather.temp_feels_like;
             } else {
-                return std::format("{}℃", realtime_weather.temp);
+                return realtime_weather.temp;
             }
         } else if (item == WeatherItem::WEATHER_TEXT) {
             return realtime_weather.weather_text;
         } else if (item == WeatherItem::WEATHER_CODE) {
             return realtime_weather.weather_code;
         } else if (item == WeatherItem::HUMIDITY) {
-            return std::format("{} %", realtime_weather.humidity);
+            return realtime_weather.humidity;
         } else if (item == WeatherItem::WIND) {
             auto wind_direction =
                 std::vformat(tr::txt(tr::TID::FMT_TMP_WIND_DIRECTION),
@@ -531,8 +668,16 @@ std::string DataProviderQWeather::WeatherDataBlock::getWeatherItem(WeatherTimeSl
             auto wind_strength = cfg.show_realtime_wind_scale ?
                 std::vformat(tr::txt(tr::TID::FMT_TMP_WIND_SCALE),
                              std::make_format_args(realtime_weather.wind_scale)) :
-                std::format("{}km/h", realtime_weather.wind_speed);
-            return std::format("{} {}", realtime_weather.wind_direction, wind_strength);
+                realtime_weather.wind_speed;
+            return std::format("{} {}", wind_direction, wind_strength);
+        } else if (item == WeatherItem::UV_INDEX) {
+            return realtime_weather.uv_index;
+        } else if (item == WeatherItem::PRECIPITATION) {
+            auto precipitation_text = utils::get_precipitation_text(realtime_weather.precipitation_type);
+            if (!realtime_weather.precipitation_intensity.empty()) {
+                return std::format("{} {}", precipitation_text, realtime_weather.precipitation_intensity);
+            }
+            return std::string{ precipitation_text };
         } else if (item == WeatherItem::AIR_QUALITY) {
             if (!realtime_air_quality.indexes.empty()) {
                 const auto &aqi = realtime_air_quality.indexes.back();
@@ -546,17 +691,35 @@ std::string DataProviderQWeather::WeatherDataBlock::getWeatherItem(WeatherTimeSl
             return formatAlerts(weather_alerts);
         }
     } else {
-        auto getForecastedWeatherContent = [](const ForecastedWeather &fcw, WeatherItem item_fc) -> std::string {
+        auto getForecastedWeatherContent = [&cfg](const ForecastedWeather &fcw, WeatherItem item_fc) -> std::string {
             if (item_fc == WeatherItem::TEMPERATURE) {
-                return std::format("{}~{}℃", fcw.temp_min, fcw.temp_max);
+                return std::format("{}~{}", fcw.temp_min, fcw.temp_max);
             } else if (item_fc == WeatherItem::WEATHER_TEXT) {
-                return fcw.weather_day == fcw.weather_night ?
-                    fcw.weather_day :
-                    std::format("{}~{}", fcw.weather_day, fcw.weather_night);
+                return fcw.day_time.weather_text == fcw.night_time.weather_text ?
+                    fcw.day_time.weather_text :
+                    std::format("{}~{}", fcw.day_time.weather_text, fcw.night_time.weather_text);
             } else if (item_fc == WeatherItem::WEATHER_CODE) {
-                return fcw.code_day;
+                return fcw.day_time.weather_code;
             } else if (item_fc == WeatherItem::HUMIDITY) {
-                return std::format("{} %", fcw.humidity);
+                return fcw.day_time.humidity;
+            } else if (item_fc == WeatherItem::WIND) {
+                auto wind_direction =
+                    std::vformat(tr::txt(tr::TID::FMT_TMP_WIND_DIRECTION),
+                                 std::make_format_args(fcw.day_time.wind_direction));
+                auto wind_strength = cfg.show_realtime_wind_scale ?
+                    std::vformat(tr::txt(tr::TID::FMT_TMP_WIND_SCALE),
+                                 std::make_format_args(fcw.day_time.wind_scale)) :
+                    fcw.day_time.wind_speed;
+                return std::format("{} {}", wind_direction, wind_strength);
+            } else if (item_fc == WeatherItem::PRECIPITATION) {
+                auto precipitation_text = utils::get_precipitation_text(fcw.day_time.precipitation_type);
+                if (!fcw.day_time.precipitation_amount.empty()) {
+                    return std::format("{} {} {}",
+                                       fcw.day_time.precipitation_prob,
+                                       precipitation_text,
+                                       fcw.day_time.precipitation_amount);
+                }
+                return std::string{ precipitation_text };
             } else if (item_fc == WeatherItem::UV_INDEX) {
                 return fcw.uv_index;
             } else {
@@ -579,23 +742,28 @@ std::string DataProviderQWeather::WeatherDataBlock::getWeatherItem(WeatherTimeSl
 bool DataProviderQWeather::validateApiAuthentication() const
 {
     if (config_app.api_host.empty()) {
-        Logger::instance().error(tr::txt(tr::TID::ERR_AUTH_NO_API_HOST));
+        spdlog::error(tr::txt(tr::TID::ERR_AUTH_NO_API_HOST));
         return false;
     }
 
     if (config_app.enable_jwt) {
+        if (config_app.developer_id.empty()) {
+            spdlog::error(tr::txt(tr::TID::ERR_AUTH_JWT_NO_DEV_ID));
+            return false;
+        }
+
         if (config_app.project_id.empty()) {
-            Logger::instance().error(tr::txt(tr::TID::ERR_AUTH_JWT_NO_PROJ_ID));
+            spdlog::error(tr::txt(tr::TID::ERR_AUTH_JWT_NO_PROJ_ID));
             return false;
         }
 
         if (config_app.credential_id.empty()) {
-            Logger::instance().error(tr::txt(tr::TID::ERR_AUTH_JWT_NO_CRED_ID));
+            spdlog::error(tr::txt(tr::TID::ERR_AUTH_JWT_NO_CRED_ID));
             return false;
         }
     } else {
         if (config_app.app_key.empty()) {
-            Logger::instance().error(tr::txt(tr::TID::ERR_AUTH_NO_APP_KEY));
+            spdlog::error(tr::txt(tr::TID::ERR_AUTH_NO_APP_KEY));
             return false;
         }
     }
@@ -604,7 +772,14 @@ bool DataProviderQWeather::validateApiAuthentication() const
 }
 
 WeatherDataCPtr DataProviderQWeather::getWeatherData(const Location &loc) const {
+    spdlog::info("qweather api: fetch weather data");
+
     if (!validateApiAuthentication()) {
+        return nullptr;
+    }
+
+    if (loc.longitude.empty() || loc.latitude.empty()) {
+        spdlog::error(tr::txt(tr::TID::ERR_NO_LONG_LAT));
         return nullptr;
     }
 
@@ -634,6 +809,8 @@ WeatherDataCPtr DataProviderQWeather::getWeatherData(const Location &loc) const 
 }
 
 bool DataProviderQWeather::geocodingDirect(const std::string &query, Locations &queried_locations) const {
+    spdlog::info("qweather api: query locations by direct geocoding");
+
     if (!validateApiAuthentication()) {
         return false;
     }
@@ -643,6 +820,8 @@ bool DataProviderQWeather::geocodingDirect(const std::string &query, Locations &
 
 bool DataProviderQWeather::geocodingReverse(const std::string &latitude, const std::string &longitude,
                                             Locations &queried_locations) const {
+    spdlog::info("qweather api: query locations by reverse geocoding");
+
     if (!validateApiAuthentication()) {
         return false;
     }

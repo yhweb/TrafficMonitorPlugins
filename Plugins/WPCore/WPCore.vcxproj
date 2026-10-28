@@ -88,10 +88,10 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;WIN32_LEAN_AND_MEAN;NOMINMAX;CPPHTTPLIB_OPENSSL_SUPPORT;CPPHTTPLIB_ZLIB_SUPPORT;WPX86;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;WIN32_LEAN_AND_MEAN;NOMINMAX;CPPHTTPLIB_OPENSSL_SUPPORT;CPPHTTPLIB_ZLIB_SUPPORT;WPX86;SPDLOG_USE_STD_FORMAT;SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\dependencies\yyjson\src\;$(ProjectDir)..\dependencies\jwt\include\;$(ProjectDir)..\dependencies\httplib\;$(VCPKG_HOME)\installed\x86-windows-static\include\;$(OPENSSL_30)\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\dependencies\yyjson\src\;$(ProjectDir)..\dependencies\jwt\include\;$(ProjectDir)..\dependencies\httplib\;$(ProjectDir)..\dependencies\spdlog\;$(VCPKG_HOME)\installed\x86-windows-static\include\;$(OPENSSL_30)\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -105,10 +105,10 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;WIN32_LEAN_AND_MEAN;NOMINMAX;CPPHTTPLIB_OPENSSL_SUPPORT;CPPHTTPLIB_ZLIB_SUPPORT;WPX86;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;WIN32_LEAN_AND_MEAN;NOMINMAX;CPPHTTPLIB_OPENSSL_SUPPORT;CPPHTTPLIB_ZLIB_SUPPORT;WPX86;SPDLOG_USE_STD_FORMAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\dependencies\yyjson\src\;$(ProjectDir)..\dependencies\jwt\include\;$(ProjectDir)..\dependencies\httplib\;$(VCPKG_HOME)\installed\x86-windows-static\include\;$(OPENSSL_30)\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\dependencies\yyjson\src\;$(ProjectDir)..\dependencies\jwt\include\;$(ProjectDir)..\dependencies\httplib\;$(ProjectDir)..\dependencies\spdlog\;$(VCPKG_HOME)\installed\x86-windows-static\include\;$(OPENSSL_30)\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -125,10 +125,10 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_LIB;WIN32_LEAN_AND_MEAN;NOMINMAX;CPPHTTPLIB_OPENSSL_SUPPORT;CPPHTTPLIB_ZLIB_SUPPORT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_LIB;WIN32_LEAN_AND_MEAN;NOMINMAX;CPPHTTPLIB_OPENSSL_SUPPORT;CPPHTTPLIB_ZLIB_SUPPORT;SPDLOG_USE_STD_FORMAT;SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\dependencies\yyjson\src\;$(ProjectDir)..\dependencies\jwt\include\;$(ProjectDir)..\dependencies\httplib\;$(ProjectDir)..\third_party\zlib\include\;$(ProjectDir)..\third_party\openssl\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\dependencies\yyjson\src\;$(ProjectDir)..\dependencies\jwt\include\;$(ProjectDir)..\dependencies\httplib\;$(ProjectDir)..\dependencies\spdlog\;$(ProjectDir)..\third_party\zlib\include\;$(ProjectDir)..\third_party\openssl\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -149,10 +149,10 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_LIB;WIN32_LEAN_AND_MEAN;NOMINMAX;CPPHTTPLIB_OPENSSL_SUPPORT;CPPHTTPLIB_ZLIB_SUPPORT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_LIB;WIN32_LEAN_AND_MEAN;NOMINMAX;CPPHTTPLIB_OPENSSL_SUPPORT;CPPHTTPLIB_ZLIB_SUPPORT;SPDLOG_USE_STD_FORMAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\dependencies\yyjson\src\;$(ProjectDir)..\dependencies\jwt\include\;$(ProjectDir)..\dependencies\httplib\;$(ProjectDir)..\third_party\zlib\include\;$(ProjectDir)..\third_party\openssl\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\dependencies\yyjson\src\;$(ProjectDir)..\dependencies\jwt\include\;$(ProjectDir)..\dependencies\httplib\;$(ProjectDir)..\dependencies\spdlog\;$(ProjectDir)..\third_party\zlib\include\;$(ProjectDir)..\third_party\openssl\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -174,7 +174,6 @@
     <ClCompile Include="DataProviderQWeather.cpp" />
     <ClCompile Include="AppLocale.cpp" />
     <ClCompile Include="DataProviderSpiderWeatherComCn.cpp" />
-    <ClCompile Include="Logger.cpp" />
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -185,7 +184,6 @@
     <ClInclude Include="AppLocale.h" />
     <ClInclude Include="DataProviderSpiderWeatherComCn.h" />
     <ClInclude Include="JsonValueHelper.h" />
-    <ClInclude Include="Logger.h" />
     <ClInclude Include="utils.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

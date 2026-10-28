@@ -24,6 +24,7 @@ protected:
 	CString str_api_host;
 	CString str_app_key;
 	int int_auth_mode;
+	CString str_jwt_dev_id;
 	CString str_jwt_proj_id;
 	CString str_jwt_cred_id;
 	CString str_jwt_pub_key_filepath;
@@ -34,13 +35,19 @@ protected:
 	BOOL bool_rt_use_wind_scale;
 	BOOL bool_rt_show_pm2p5;
 	BOOL bool_rt_show_pm10;
+	BOOL bool_rt_show_uvi;
+	BOOL bool_rt_show_precipitation;
 	BOOL bool_fc_show_hum;
 	BOOL bool_fc_show_uvi;
+	BOOL bool_fc_show_day_night_details;
+	BOOL bool_fc_show_wind;
+	BOOL bool_fc_use_wind_scale;
+	BOOL bool_fc_show_precipitation;
 	CComboBox ctrl_combobox_icon_style;
 
-	void SetControlAvailabilityByAuthMode();
-public:
-	virtual BOOL OnInitDialog();
+	void SetControlAvailabilityByAuthMode() const;
+
+    virtual BOOL OnInitDialog();
 	virtual void OnOK();
 	afx_msg void OnBnClickedRadioAuth();
 	afx_msg void OnBnClickedButtonCreateKeyPair();

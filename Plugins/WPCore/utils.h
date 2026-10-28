@@ -28,7 +28,7 @@ namespace utils
 
     int internetGetWithRetry(const std::string &host, const std::string &path, std::string &content,
                              const HttpParams &params = {}, const HttpHeaders &headers = {},
-                             int retry_times = 3);
+                             int max_attempts = 3);
 
     std::string timestamp_string(std::int64_t sec);
     std::string timestamp_string_date(std::int64_t sec);
@@ -38,4 +38,7 @@ namespace utils
     std::int64_t parse_iso_datetime_to_local_seconds(std::string_view iso_datatime);
 
     std::string string_join(const std::vector<std::string> &parts, std::string_view delim);
+
+    std::string_view get_direction_text(std::string_view compass_code);
+    std::string_view get_precipitation_text(std::string_view type_code);
 }

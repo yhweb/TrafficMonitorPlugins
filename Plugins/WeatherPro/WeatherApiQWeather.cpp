@@ -10,6 +10,7 @@ namespace
 {
     constexpr std::wstring_view WSV_API_HOST{ L"api_host" };
     constexpr std::wstring_view WSV_APP_KEY{ L"app_key" };
+    constexpr std::wstring_view WSV_DEV_ID{ L"developer_id" };
     constexpr std::wstring_view WSV_CRED_ID{ L"credential_id" };
     constexpr std::wstring_view WSV_ENABLE_JWT{ L"enable_jwt" };
     constexpr std::wstring_view WSV_FILL{ L"fill" };
@@ -17,6 +18,10 @@ namespace
     constexpr std::wstring_view WSV_ICON_STYLE{ L"icon_style" };
     constexpr std::wstring_view WSV_SHOW_FC_UVI{ L"show_forecasted_uv_index" };
     constexpr std::wstring_view WSV_SHOW_FC_HUM{ L"show_forecasted_humidity" };
+    constexpr std::wstring_view WSV_SHOW_FC_WIND{ L"show_forecasted_wind" };
+    constexpr std::wstring_view WSV_SHOW_FC_WIND_SCALE{ L"show_forecasted_wind_scale" };
+    constexpr std::wstring_view WSV_SHOW_FC_PRECIPITATOPN{ L"show_forecasted_precipitation" };
+    constexpr std::wstring_view WSV_SHOW_FC_DN_DETAILS{ L"show_forecasted_day_night_details" };
     constexpr std::wstring_view WSV_SHOW_RT_HUM{ L"show_realtime_humidity" };
     constexpr std::wstring_view WSV_SHOW_RT_PM2P5{ L"show_realtime_pm2p5" };
     constexpr std::wstring_view WSV_SHOW_RT_PM10{ L"show_realtime_pm10" };
@@ -94,6 +99,7 @@ void WapiQWeather::LoadConfig(const CSimpleIniW &ini_file) {
 
     provider_.config_app.app_key = ini_helper.GetValue(WSV_APP_KEY);
     provider_.config_app.api_host = ini_helper.GetValue(WSV_API_HOST);
+    provider_.config_app.developer_id = ini_helper.GetValue(WSV_DEV_ID);
     provider_.config_app.project_id = ini_helper.GetValue(WSV_PROJ_ID);
     provider_.config_app.credential_id = ini_helper.GetValue(WSV_CRED_ID);
     provider_.config_app.jwt_pub_key_file = ini_helper.GetValue(WSV_PUB_KEY_FILE);
@@ -108,6 +114,10 @@ void WapiQWeather::LoadConfig(const CSimpleIniW &ini_file) {
     provider_.config_fmt.show_realtime_pm10 = ini_helper.GetBool(WSV_SHOW_RT_PM10);
     provider_.config_fmt.show_forecasted_uv_index = ini_helper.GetBool(WSV_SHOW_FC_UVI);
     provider_.config_fmt.show_forecasted_humidity = ini_helper.GetBool(WSV_SHOW_FC_HUM);
+    provider_.config_fmt.show_forecasted_wind = ini_helper.GetBool(WSV_SHOW_FC_WIND);
+    provider_.config_fmt.show_forecasted_wind_scale = ini_helper.GetBool(WSV_SHOW_FC_WIND_SCALE, true);
+    provider_.config_fmt.show_forecasted_precipitation = ini_helper.GetBool(WSV_SHOW_FC_PRECIPITATOPN);
+    provider_.config_fmt.show_forecasted_day_night_details = ini_helper.GetBool(WSV_SHOW_FC_DN_DETAILS);
 }
 
 void WapiQWeather::SaveConfig(CSimpleIniW &ini) const {
@@ -117,6 +127,7 @@ void WapiQWeather::SaveConfig(CSimpleIniW &ini) const {
 
     ini_helper.SetValue(WSV_APP_KEY, provider_.config_app.app_key);
     ini_helper.SetValue(WSV_API_HOST, provider_.config_app.api_host);
+    ini_helper.SetValue(WSV_DEV_ID, provider_.config_app.developer_id);
     ini_helper.SetValue(WSV_PROJ_ID, provider_.config_app.project_id);
     ini_helper.SetValue(WSV_CRED_ID, provider_.config_app.credential_id);
     ini_helper.SetValue(WSV_PUB_KEY_FILE, provider_.config_app.jwt_pub_key_file);
@@ -131,4 +142,8 @@ void WapiQWeather::SaveConfig(CSimpleIniW &ini) const {
     ini_helper.SetBool(WSV_SHOW_RT_PM10, provider_.config_fmt.show_realtime_pm10);
     ini_helper.SetBool(WSV_SHOW_FC_UVI, provider_.config_fmt.show_forecasted_uv_index);
     ini_helper.SetBool(WSV_SHOW_FC_HUM, provider_.config_fmt.show_forecasted_humidity);
+    ini_helper.SetBool(WSV_SHOW_FC_WIND, provider_.config_fmt.show_forecasted_wind);
+    ini_helper.SetBool(WSV_SHOW_FC_WIND_SCALE, provider_.config_fmt.show_forecasted_wind_scale);
+    ini_helper.SetBool(WSV_SHOW_FC_PRECIPITATOPN, provider_.config_fmt.show_forecasted_precipitation);
+    ini_helper.SetBool(WSV_SHOW_FC_DN_DETAILS, provider_.config_fmt.show_forecasted_day_night_details);
 }

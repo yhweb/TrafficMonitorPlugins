@@ -1,6 +1,5 @@
-﻿#include "utils.h"
+#include "utils.h"
 #include "AppLocale.h"
-#include "Logger.h"
 
 #include <format>
 #include <chrono>
@@ -8,6 +7,7 @@
 #include <mutex>
 
 #include <httplib.h>
+#include <spdlog/spdlog.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -80,12 +80,56 @@ namespace utils
     }
 #endif
 
+    namespace
+    {
+        template <typename Map>
+        std::string joinMapKeys(const Map& m) {
+            std::string out = "[";
+            bool first = true;
+            for (const auto& [k, _] : m) {
+                if (!first) out += ',';
+                out += k;
+                first = false;
+            }
+            out += ']';
+            return out;
+        }
+
+        std::string_view lookupTextByCode(const std::unordered_map<std::string_view, tr::TID> &code_tid_map,
+                                          const std::string_view code,
+                                          const std::string_view func_name) {
+            std::string lower_code{ code };
+            std::ranges::transform(code, std::begin(lower_code),
+                                   [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+            if (code_tid_map.contains(lower_code)) {
+                return tr::txt(code_tid_map.at(lower_code));
+            }
+
+            spdlog::error("Unkown code of {}: {}", func_name, code);
+            return "???";
+        }
+
+        std::string_view sanitizeHost(std::string_view host) {
+            constexpr std::string_view sanitized_host_qweather{ "***.qweatherapi.com" };
+
+            if (host.find("qweatherapi.com") != std::string_view::npos) {
+                return sanitized_host_qweather;
+            }
+
+            return host;
+        }
+    }
+
     int internetGet(const std::string &host, const std::string &path, std::string &content,
                     const HttpParams &params/* = {}*/, const HttpHeaders &headers/* = {}*/)
     {
         using namespace std::chrono_literals;
 
         content.clear();
+
+        SPDLOG_DEBUG("internetGet: host={}, path={}, params={}, headers={}",
+                     sanitizeHost(host), path, joinMapKeys(params.data), joinMapKeys(headers.data));
 
         httplib::Client clt(host);
         clt.set_connection_timeout(5s);
@@ -105,38 +149,60 @@ namespace utils
         auto res = clt.Get(path, lib_params, lib_headers);
 
         if (res) {
-            if (res->status == 404) return res->status;
+            if (res->status >= 400) {
+                spdlog::warn("internetGet: HTTP {}, host={}, path={}",
+                             res->status, host, path);
+            }
 
             content = std::move(res->body);
             return res->status;
-        } else {
-            Logger::instance().error(
-                std::format("INTERNET_RESPONSE_ERROR: {}, ssl_error={}, ssl_backend_error=0x{:X}",
-                            httplib::to_string(res.error()),
-                            res.ssl_error(),
-                            res.ssl_backend_error())
-            );
-            return 0;
         }
+
+        spdlog::error("internetGet failed: {}. host={}, path={}, params={}, headers={}, "
+                      "ssl_error={}, ssl_backend_error=0x{:X}",
+                      httplib::to_string(res.error()),
+                      sanitizeHost(host),
+                      path,
+                      joinMapKeys(params.data),
+                      joinMapKeys(headers.data),
+                      res.ssl_error(),
+                      res.ssl_backend_error());
+        return 0;
     }
 
     int internetGetWithRetry(const std::string &host, const std::string &path, std::string &content,
                              const HttpParams &params/* = {}*/, const HttpHeaders &headers/* = {}*/,
-                             int retry_times/* = 3*/) {
+                             int max_attempts/* = 3*/) {
         // retry getting data if internet connection issues occurred
-        auto status_code{ 0 };
-        do {
-            status_code = utils::internetGet(host, path, content, params, headers);
+
+        max_attempts = std::clamp(max_attempts, 1, 10);    // avoid excessively large maximum retry count values
+
+        for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+            auto status_code = internetGet(host, path, content, params, headers);
+
+            // success
             if (status_code != 0) {
+                if (attempt > 1) {
+                    spdlog::info("internetGetWithRetry recovered: host={}, path={}, attempt={}/{}, status={}",
+                                 host, path, attempt, max_attempts, status_code);
+                }
+
+                return status_code;
+            }
+
+            spdlog::warn("internetGetWithRetry: attempt {}/{} failed, host={}, path={}",
+                         attempt, max_attempts, host, path);
+
+            if (attempt == max_attempts) {
                 break;
             }
 
-            using namespace std::chrono_literals;
-            std::this_thread::sleep_for(5s);
-            --retry_times;
-        } while (retry_times > 0);
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+        }
 
-        return status_code;
+        spdlog::error("internetGetWithRetry exhausted: host={}, path={}, attempts={}",
+                      host, path, max_attempts);
+        return 0;
     }
 
     std::string timestamp_string(std::int64_t sec) {
@@ -187,7 +253,6 @@ namespace utils
 
             throw std::runtime_error("failed to parse UTC datetime: " + text);
         };
-
         auto parse_with_offset = [](const std::string& text)
         {
             local_time<seconds> lt{};
@@ -223,7 +288,7 @@ namespace utils
             }
         }
         catch (const std::exception &e) {
-            Logger::instance().error(e.what());
+            spdlog::error(e.what());
         }
 
         return utc_seconds;
@@ -244,5 +309,43 @@ namespace utils
             result.append(parts[i]);
         }
         return result;
+    }
+
+    std::string_view get_direction_text(const std::string_view compass_code) {
+        static const std::unordered_map<std::string_view, tr::TID> code_tid_map{
+            {"n", tr::TID::FMT_DIRECTION_N,},
+            {"nne", tr::TID::FMT_DIRECTION_NNE,},
+            {"ne", tr::TID::FMT_DIRECTION_NE,},
+            {"ene", tr::TID::FMT_DIRECTION_ENE,},
+            {"e", tr::TID::FMT_DIRECTION_E,},
+            {"ese", tr::TID::FMT_DIRECTION_ESE,},
+            {"se", tr::TID::FMT_DIRECTION_SE,},
+            {"sse", tr::TID::FMT_DIRECTION_SSE,},
+            {"s", tr::TID::FMT_DIRECTION_S,},
+            {"ssw", tr::TID::FMT_DIRECTION_SSW,},
+            {"sw", tr::TID::FMT_DIRECTION_SW,},
+            {"wsw", tr::TID::FMT_DIRECTION_WSW,},
+            {"w", tr::TID::FMT_DIRECTION_W,},
+            {"wnw", tr::TID::FMT_DIRECTION_WNW,},
+            {"nw", tr::TID::FMT_DIRECTION_NW,},
+            {"nnw", tr::TID::FMT_DIRECTION_NNW,},
+            {"none", tr::TID::FMT_DIRECTION_NONE,},
+            {"vrb", tr::TID::FMT_DIRECTION_VRB,},
+        };
+
+        return lookupTextByCode(code_tid_map, compass_code, "direction");
+    }
+
+    std::string_view get_precipitation_text(const std::string_view type_code) {
+        static const std::unordered_map<std::string_view, tr::TID> code_tid_map{
+            {"rain", tr::TID::FMT_PRECIPITATION_RAIN},
+            {"snow", tr::TID::FMT_PRECIPITATION_SNOW},
+            {"ice", tr::TID::FMT_PRECIPITATION_ICE},
+            {"mixed", tr::TID::FMT_PRECIPITATION_MIXED},
+            {"none", tr::TID::FMT_PRECIPITATION_NONE},
+            {"unknown", tr::TID::FMT_PRECIPITATION_UNKNOWN},
+        };
+
+        return lookupTextByCode(code_tid_map, type_code, "precipitation");
     }
 }
