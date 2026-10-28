@@ -106,27 +106,131 @@
 | 上游仓库 | https://github.com/Haojia521/TMP-WeatherPro |
 | 发布页 | https://github.com/Haojia521/TMP-WeatherPro/releases |
 | 镜像仓库 | https://gitee.com/Haojia521/TMP-WeatherPro |
-| 当前合并版本 | v1.3.1（见 `Plugins/WeatherPro/version.json`） |
+| 当前合并版本 | v1.4.0（上游 `main` @ `1e29c40`，见 `Plugins/WeatherPro/version.json`） |
+| 上游基线分支 | `sync/weatherpro-1.4.0` |
+| 本地功能分支 | `feat/dual-line-always` |
 
 本仓库对应结构：
 
 - `Plugins/WeatherPro` —— 插件本体（MFC DLL，源自上游 `WeatherPro/`）
 - `Plugins/WPCore` —— 静态库依赖（源自上游 `WPCore/`）
-- `Plugins/dependencies` —— 头文件依赖（httplib / jwt-cpp / simpleini / yyjson）
+- `Plugins/dependencies` —— 头文件依赖（httplib / jwt-cpp / simpleini / yyjson / spdlog）
 - `Plugins/third_party` —— 预编译静态库（OpenSSL / zlib），仅 x64
 
-同步上游的步骤：
+#### 分支约定
+
+本地改动不压在上游代码里，而是拆成「基线 + 功能」两层，上游发版后只需重放一层：
+
+| 分支 | 内容 | 维护方式 |
+| --- | --- | --- |
+| `sync/weatherpro-<版本>` | 纯上游快照 + 本仓库结构适配，**不含任何本地功能** | 每版新建一个，只加一个 `sync:` 提交 |
+| `feat/dual-line-always` | 只叠「任意位置强制双行」一个提交（8 文件 / +25 −3） | `git rebase` 跟到新基线上 |
+| `yh` | 日常开发主分支 | 分支上验证通过后再合入 |
+
+> 当前 `sync/weatherpro-1.4.0` 与上游 `main` 的差异**仅 8 个文件**（清单见「必须保留的结构适配」），其余源码逐字节一致；`feat/dual-line-always` 与基线的差异也只碰那 8 个功能文件，两组文件互不重叠，所以 rebase 不会冲突。
+
+#### 跟随上游：改两行后整段跑
 
 ```bash
-git clone https://github.com/Haojia521/TMP-WeatherPro.git /tmp/TMP-WeatherPro
+# ===== 跟新版本时只改这两行 =====
+V=v1.5.0
+BASE="sync/weatherpro-1.5.0"
+# ================================
+
+cd /e/code/TrafficMonitor_Plugins
+git remote add wp https://github.com/Haojia521/TMP-WeatherPro.git 2>/dev/null
+git fetch wp --tags
+REF=wp/main                                      # 想钉某个 tag 就写 refs/tags/$V
+git show "$REF":version.json | head -6           # 先确认 version 真的是 $V
+OLDBASE=$(git rev-parse feat/dual-line-always^)  # 旧基线 = 功能分支的父提交
+
+# ① 以旧基线为底新建基线分支
+git checkout -B "$BASE" "$OLDBASE"
+
+# ② 备份结构适配文件（被上游覆盖后要放回来）
+mkdir -p /tmp/_wp_keep
+cp Plugins/WeatherPro/PluginInterface.h          /tmp/_wp_keep/
+cp Plugins/WeatherPro/WeatherPro.vcxproj         /tmp/_wp_keep/
+cp Plugins/WeatherPro/WeatherPro.vcxproj.filters /tmp/_wp_keep/
+cp Plugins/WPCore/WPCore.vcxproj                 /tmp/_wp_keep/
+cp Plugins/WPCore/WPCore.vcxproj.filters         /tmp/_wp_keep/
+cp Plugins/WPCore/utils.cpp                      /tmp/_wp_keep/
+cp Plugins/WPCore/utils.h                        /tmp/_wp_keep/
+
+# ③ 解出上游源码整体覆盖（cp 不删除本地独有文件与未跟踪目录）
+rm -rf /tmp/_wp_new && mkdir -p /tmp/_wp_new
+git archive "$REF" WeatherPro WPCore version.json | tar -x -C /tmp/_wp_new
+cp -rf /tmp/_wp_new/WeatherPro/. Plugins/WeatherPro/
+cp -rf /tmp/_wp_new/WPCore/.    Plugins/WPCore/
+cp -f  /tmp/_wp_new/version.json Plugins/WeatherPro/version.json
+
+# ④ 放回结构适配，提交基线
+cp -f /tmp/_wp_keep/PluginInterface.h           Plugins/WeatherPro/
+cp -f /tmp/_wp_keep/WeatherPro.vcxproj          Plugins/WeatherPro/
+cp -f /tmp/_wp_keep/WeatherPro.vcxproj.filters  Plugins/WeatherPro/
+cp -f /tmp/_wp_keep/WPCore.vcxproj              Plugins/WPCore/
+cp -f /tmp/_wp_keep/WPCore.vcxproj.filters      Plugins/WPCore/
+cp -f /tmp/_wp_keep/utils.cpp                   Plugins/WPCore/
+cp -f /tmp/_wp_keep/utils.h                     Plugins/WPCore/
+git add Plugins/WeatherPro Plugins/WPCore
+git commit -m "sync: 同步 WeatherPro 上游 $V 并适配本仓库结构"
+
+# ⑤ 功能提交重放到新基线
+git checkout feat/dual-line-always
+git rebase --onto "$BASE" "$OLDBASE" feat/dual-line-always
+
+# ⑥ 校验：应仍是 8 files changed, 25 insertions(+), 3 deletions(-)
+git diff --stat "$BASE" feat/dual-line-always
+
+# ⑦ 编译验证（见下方「生成验证」）
 ```
 
-1. 对比 `/tmp/TMP-WeatherPro/WeatherPro` 与 `Plugins/WeatherPro`，逐文件合入源码变更。
-2. 若上游改了 `WPCore`，同理合入 `Plugins/WPCore`。
-3. 若上游新增第三方依赖，补进 `Plugins/dependencies` 或 `Plugins/third_party`。
-4. 上游的 `dependencies/*` 是 git submodule，本仓库只保留实际用到的头文件，不要把 submodule 整个拷进来。
-5. 更新 `Plugins/WeatherPro/version.json` 与上表的版本号。
-6. 生成验证：`MSBuild TrafficMonitorPlugins.sln -t:WeatherPro -p:Configuration=Release -p:Platform=x64`。
+冲突只在第 ⑤ 步出现，且只会落在那 8 个功能文件上。处理：`git status` 看文件 → 改完 `git add <文件> && git rebase --continue`；放弃用 `git rebase --abort`。
+
+#### 必须保留的结构适配（共 8 个文件）
+
+覆盖上游会带回上游原版，这些**不要跟着上游走**，否则编译失败或丢功能：
+
+| 文件 | 本仓库做法 | 上游原版 |
+| --- | --- | --- |
+| `Plugins/WeatherPro/PluginInterface.h` | `GetAPIVersion()` 返回 **8** | 返回 7 |
+| `Plugins/WeatherPro/WeatherPro.vcxproj` | `PlatformToolset` **v145**；头文件路径指向 `..\dependencies\{simpleini,yyjson,httplib,spdlog,jwt}`、`..\third_party\{openssl,zlib}\include` | v143，按上游 `WeatherPro/` 布局 |
+| `Plugins/WeatherPro/WeatherPro.vcxproj.filters` | 与上面配套 | 同上 |
+| `Plugins/WPCore/WPCore.vcxproj` | `PlatformToolset` **v145**；额外加 `..\dependencies\spdlog\` | v143，无 spdlog |
+| `Plugins/WPCore/WPCore.vcxproj.filters` | 与上面配套 | 同上 |
+| `Plugins/WPCore/utils.cpp` | 多 **76 行**：从 Windows 证书存储抓根证书喂给 OpenSSL（`getWindowsRootCaPem`），否则 HTTPS 报 `X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN` | 无 |
+| `Plugins/WPCore/utils.h` | 声明 `getWindowsRootCaPem()` | 无 |
+| `Plugins/WeatherPro/version.json` | 末尾带换行 | 无换行 |
+
+> 若上游某天把 `GetAPIVersion()` 升到 8，或自己也做了证书存储适配，对应行可去掉。
+
+#### 生成验证
+
+```powershell
+# 必须先清代理变量，否则 MSBuild 报 MSB6001
+Remove-Item -Path Env:http_proxy,Env:https_proxy,Env:no_proxy,Env:HTTP_PROXY,Env:HTTPS_PROXY,Env:NO_PROXY -ErrorAction SilentlyContinue
+& 'D:\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\MSBuild.exe' `
+  TrafficMonitorPlugins.sln -t:WeatherPro -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
+```
+
+- **先关掉 `TrafficMonitor.exe`**，否则 C/C++ 其实 0 错误，但 post-build 拷贝会报 `另一个程序正在使用此文件` + `error MSB3073`（DLL 被宿主占用）。
+- 成功标志：`[post-build] copied "WeatherPro.dll" -> "E:\code\TrafficMonitor_bin\plugins"`，退出码 0。
+- 无关警告：`LNK4099`（第三方 OpenSSL 缺 `ossl_static.pdb`），可忽略。
+
+#### 常用查询
+
+```bash
+git fetch wp --tags
+git log --oneline wp/main -10                     # 上游最近提交
+git show refs/tags/v1.4.0:version.json | head -6  # 核对 tag 版本（tag 可能滞后）
+git diff --stat sync/weatherpro-1.4.0 <新基线>    # 这一版上游改了什么
+git diff --text sync/weatherpro-1.4.0 <新基线> -- Plugins/WeatherPro/WeatherPro.rc  # .rc 是 UTF-16LE
+git log --oneline --graph --decorate -6           # 当前分支拓扑
+```
+
+> `version.json` 在上游仓库根目录，本仓库放在 `Plugins/WeatherPro/version.json`，同步时复制过去。
+> `Plugins/WeatherPro/{LICENSE.md,README.md,WeatherPro,docs,images,x64,bin}` 是上游 `WeatherPro/` 里没有的内容，覆盖不受影响（`cp -rf` 不删除）。
+> 第 ⑦ 步编译报错时，先确认 `Plugins/dependencies/spdlog` 仍在（它已被 git 跟踪，正常不会丢）。
 
 > 说明：上游仅提供 x64 的 OpenSSL/zlib 静态库，因此本仓库的 WeatherPro/WPCore 只映射 x64 与 ARM64EC，没有 x86 配置。
 
