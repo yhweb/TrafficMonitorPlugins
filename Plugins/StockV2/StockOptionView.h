@@ -65,11 +65,19 @@ private:
     // 优先显示变动价格
     wxCheckBox* m_priorityDisplayChangedCheck;
     wxCheckBox* m_isDisplayStockNameCheck;
+    // 走势图显示天数下拉框（1~5天）
+    wxChoice* m_historyDaysChoice;
+    // 走势图显示天数下拉框（1~5天）
     // 成本价显示相关
     wxCheckBox* m_isDisplayCostCheck;
     wxCheckBox* m_isDisplayCostProfitPriceCheck;
     wxCheckBox* m_isDisplayCostProfitPercentCheck;
     wxCheckBox* m_isDisplayAliasCheck;
+    wxCheckBox* m_isDrawHistoryGraphCheck;
+    // 面积图颜色（深色/浅色各一套）与虚线外框
+    wxColourPickerCtrl* m_colourGraphDark;
+    wxColourPickerCtrl* m_colourGraphLight;
+    wxCheckBox* m_isGraphDashedBoxCheck;
     // 滚动显示相关
     wxCheckBox* m_isScrollEnableCheck;
     wxSpinCtrl* m_scrollPageSizeSpin;

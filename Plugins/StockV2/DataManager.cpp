@@ -7,6 +7,11 @@
 #include <wx/webrequest.h>
 #include <wx/wx.h>
 #include <random>
+#include <cstdlib>
+#include <cmath>
+#include <string>
+#include <vector>
+#include <map>
 #include <wx/hashmap.h>
 #include "StockV2.h"
 
@@ -16,6 +21,12 @@
 LDataManager LDataManager::m_instance;
 
 constexpr auto WEB_USERAGENT = _T("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0");
+
+// 5 日分时接口（走势图数据源）：股票走 5 分钟 K 线，期货走四日分时。
+// 期货的 symbol 是运行期拼的（要去掉 nf_ / CFF_RE_ 前缀），所以只固定前后缀。
+static const wxString HISTORY_STOCK_KLINE_URL = wxT("https://quotes.sina.cn/cn/api/jsonp.php/var%20t1=/CN_MarketDataService.getKLineData?symbol=");
+static const wxString HISTORY_FUTURES_URL_PREFIX = wxT("https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t5");
+static const wxString HISTORY_FUTURES_URL_MID = wxT("=/InnerFuturesNewService.getFourDaysLine?symbol=");
 
 namespace
 {
@@ -28,6 +39,13 @@ namespace
     static const auto KEY_CFG_DISPLAY_COST_PROFIT_PRICE = "/stock/is_display_cost_profit_price";
     static const auto KEY_CFG_DISPLAY_COST_PROFIT_PERCENT = "/stock/is_display_cost_profit_percent";
     static const auto KEY_CFG_DISPLAY_ALIAS = "/stock/is_display_alias";
+    static const auto KEY_CFG_DRAW_HISTORY_GRAPH = "/stock/is_draw_history_graph";
+    static const auto KEY_CFG_HISTORY_DAYS = "/stock/history_days";
+    static const auto KEY_CFG_HISTORY_GRAPH_MODE = "/stock/history_graph_mode";
+    static const auto KEY_CFG_HISTORY_GRAPH_STYLE = "/stock/history_graph_style";
+    static const auto KEY_CFG_GRAPH_COLOR_DARK = "/stock/history_graph_color_dark";
+    static const auto KEY_CFG_GRAPH_COLOR_LIGHT = "/stock/history_graph_color_light";
+    static const auto KEY_CFG_GRAPH_DASHED_BOX = "/stock/history_graph_dashed_box";
     static const auto KEY_CFG_SCROLL_ENABLE = "/stock/is_scroll_enable";
     static const auto KEY_CFG_SCROLL_PAGE_SIZE = "/stock/scroll_page_size";
     static const auto KEY_CFG_SCROLL_INTERVAL = "/stock/scroll_interval";
@@ -254,6 +272,231 @@ namespace
     }
 }
 
+// ==================== 5 日分时（走势图数据源） ====================
+//
+// 实时行情是一次请求拿全部自选（w.sinajs.cn），分时接口却是一只票一个请求，
+// 所以独立成一个任务：TASK_KEY_STOCK_HISTORY_INIT 首拉一次，TASK_KEY_STOCK_HISTORY_REFRESH 每 60 秒刷新。
+//
+// 数据源（都是 JSONP，剥壳后交给 yyjson）：
+//   股票：https://quotes.sina.cn/cn/api/jsonp.php/var%20t1=/CN_MarketDataService.getKLineData
+//         ?symbol=sz002086&scale=5&ma=no&datalen=240
+//         返回 /*<script>...</script>*/var t1=([{"day":"...","close":"0.491",...},...]); 取 close
+//   期货：https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t5nf_M2701=
+//         /InnerFuturesNewService.getFourDaysLine?symbol=M2701
+//         返回 var t5nf_M2701=([[点,点],[点,点],...]); 外层是交易日，内层每个点是
+//         [时间, 价格, 均价, 成交量, 持仓量, 昨收(仅首点), 日期(仅首点)]，取索引 1
+//         每日 21:00 起算（含夜盘），组顺序即时间顺序，按组直接拼接即可
+
+// 从 JSONP 文本里截出 JSON 数组：第一个 [ 到最后一个 ]。
+// 两个接口前后缀不同（/*<script>*/var t1=( 、var t5nf_M2701=( 、结尾 );），
+// 但「第一个 [ 到最后一个 ]」对它们都成立，注释里也没有方括号。
+static bool ExtractJsonArray(const std::string &raw, std::string &json)
+{
+    const size_t begin = raw.find('[');
+    if (begin == std::string::npos)
+    {
+        return false;
+    }
+    const size_t end = raw.rfind(']');
+    if (end == std::string::npos || end <= begin)
+    {
+        return false;
+    }
+    json.assign(raw, begin, end - begin + 1);
+    return true;
+}
+
+// 字符串转正数。返回 false 表示该字段不可用（空串、非数字、0）。
+// 价格 0 一律当坏点丢掉：走势图对 0 值极其敏感，一个 0 就能把整条曲线压平。
+static bool ParsePositivePrice(const char *text, double &out)
+{
+    if (text == nullptr || *text == 0)
+    {
+        return false;
+    }
+    char *endptr = nullptr;
+    const double v = std::strtod(text, &endptr);
+    if (endptr == text || !std::isfinite(v) || v <= 0.0)
+    {
+        return false;
+    }
+    out = v;
+    return true;
+}
+
+// 该市场是否走「股票分钟K线」这套接口（A股/ETF/指数/债券逆回购）。
+// 注意：这里不调用 StockDef.h 里的 isCN()。它在头文件里是非 inline 的命名空间级定义，
+// 在本 TU 里 odr-use 会让编译器和 pch.obj 里的副本撞成 LNK2005 多重定义。市场判断就地展开。
+static bool IsStockKLineMarket(MarketType type)
+{
+    return type == MarketType::MarketType_SZ_SH ||
+           type == MarketType::MarketType_BJ ||
+           type == MarketType::MarketType_GN ||
+           type == MarketType::MarketType_HY ||
+           type == MarketType::MarketType_SI ||
+           type == MarketType::MarketType_CNI ||
+           type == MarketType::MarketType_DY ||
+           type == MarketType::MarketType_REPO;
+}
+// 价格字段统一是字符串（股票 close、期货索引 1 都是 "0.491" 这种带引号的形式）
+static bool ReadPriceField(yyjson_val *val, double &out)
+{
+    if (val == nullptr)
+    {
+        return false;
+    }
+    if (yyjson_is_str(val))
+    {
+        return ParsePositivePrice(yyjson_get_str(val), out);
+    }
+    // 不用 yyjson_get_num：本工程带的 yyjson 版本没有该 API（编译期报找不到标识符）。
+    // 两个接口的价格都是带引号的字符串，非字符串一律当坏点丢弃。
+    return false;
+}
+
+// getKLineData：数组元素是对象，取 close 字段（时间顺序即最早在前）
+static StockHistorySeries ParseStockKLinePrices(const std::string &json)
+{
+    StockHistorySeries series;
+    // 股票分钟K线每天固定 STOCK_HISTORY_KLINE_POINTS_PER_DAY 根，据此给出每日满槽数；
+    // 最后一天若还没走完，实际点数会少，渲染侧据此在右侧留白。
+    series.slotsPerDay = STOCK_HISTORY_KLINE_POINTS_PER_DAY;
+    yyjson_doc *doc = yyjson_read(json.c_str(), json.size(), 0);
+    if (doc == nullptr)
+    {
+        return series;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (root != nullptr && yyjson_is_arr(root))
+    {
+        wxString lastDay;
+        std::vector<double> curDay;
+        yyjson_arr_iter iter;
+        yyjson_arr_iter_init(root, &iter);
+        yyjson_val *item = nullptr;
+        while ((item = yyjson_arr_iter_next(&iter)) != nullptr)
+        {
+            if (!yyjson_is_obj(item))
+            {
+                continue;
+            }
+            // day 字段形如 "2026-10-29 09:35:00"，取日期部分判断是否换天
+            const char *dayText = yyjson_get_str(yyjson_obj_get(item, "day"));
+            wxString day = dayText ? wxString(dayText).Left(10) : wxString();
+            double price = 0.0;
+            const bool ok = ReadPriceField(yyjson_obj_get(item, "close"), price);
+            if (!day.IsEmpty() && !lastDay.IsEmpty() && day != lastDay)
+            {
+                if (!curDay.empty())
+                {
+                    series.days.push_back(std::move(curDay));
+                    curDay.clear();
+                }
+            }
+            if (!day.IsEmpty())
+            {
+                lastDay = day;
+            }
+            if (ok)
+            {
+                curDay.push_back(price);
+            }
+        }
+        if (!curDay.empty())
+        {
+            series.days.push_back(std::move(curDay));
+        }
+    }
+    yyjson_doc_free(doc);
+    return series;
+}
+
+// getFourDaysLine：外层数组是交易日，内层是该日时间点，每个时间点取索引 1 的价格。
+// maxDays 只保留最近的若干个交易日（接口固定回 4 天，取尾部即可）。
+static StockHistorySeries ParseFuturesFourDaysPrices(const std::string &json, int maxDays)
+{
+    StockHistorySeries series;
+    std::vector<std::vector<double>> days;
+    yyjson_doc *doc = yyjson_read(json.c_str(), json.size(), 0);
+    if (doc == nullptr)
+    {
+        return series;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (root != nullptr && yyjson_is_arr(root))
+    {
+        yyjson_arr_iter dayIter;
+        yyjson_arr_iter_init(root, &dayIter);
+        yyjson_val *day = nullptr;
+        while ((day = yyjson_arr_iter_next(&dayIter)) != nullptr)
+        {
+            if (!yyjson_is_arr(day))
+            {
+                continue;
+            }
+            std::vector<double> dayPrices;
+            yyjson_arr_iter pointIter;
+            yyjson_arr_iter_init(day, &pointIter);
+            yyjson_val *point = nullptr;
+            while ((point = yyjson_arr_iter_next(&pointIter)) != nullptr)
+            {
+                if (!yyjson_is_arr(point))
+                {
+                    continue;
+                }
+                double price = 0.0;
+                if (ReadPriceField(yyjson_arr_get(point, 1), price))
+                {
+                    dayPrices.push_back(price);
+                }
+            }
+            if (!dayPrices.empty())
+            {
+                days.push_back(std::move(dayPrices));
+            }
+        }
+    }
+    yyjson_doc_free(doc);
+
+    // 每日满槽数必须在截断前用【全部】组算最大点数：
+    // 接口末组是当天尚未走完的夜盘（点数偏少）。若先按 maxDays 截断再取最大，
+    // historyDays=1 时只剩这个残缺末组，slotsPerDay 被压到末组点数，
+    // 渲染侧算出 usedSlots == totalSlots，1 天视图被 100% 铺满、右侧没有留白。
+    // 期货夜盘 21:00 到次日 15:00，满一天约 350 点左右，实际以接口返回为准。
+    size_t maxPts = 0;
+    for (const auto &d : days)
+    {
+        if (d.size() > maxPts)
+        {
+            maxPts = d.size();
+        }
+    }
+    if (maxPts > 0)
+    {
+        series.slotsPerDay = static_cast<int>(maxPts);
+    }
+    // 无任何数据时保持 0，渲染层退化为「按实际点数铺满」的兜底分支
+
+    // 只保留最近的 maxDays 个交易日
+    size_t first = 0;
+    if (maxDays > 0 && days.size() > static_cast<size_t>(maxDays))
+    {
+        first = days.size() - static_cast<size_t>(maxDays);
+    }
+    for (size_t i = first; i < days.size(); ++i)
+    {
+        series.days.push_back(std::move(days[i]));
+    }
+    return series;
+}
+
+// 分时刷新任务回调。绝不能把异常抛回 TaskWorkThread：
+// TaskManager 一旦捕获到异常就把任务标成 m_bHasError 并永久跳过调度（见 TaskManager.cpp）。
+static void OnRefreshStockHistoryData(LPVOID)
+{
+    g_data.RefreshHistoryPrices();
+}
+
 // LDataManager 构造
 LDataManager::LDataManager()
 {
@@ -273,6 +516,8 @@ LDataManager::~LDataManager()
 {
     g_task->DeleteTask(TASK_KEY_INIT_LOAD);
     g_task->DeleteTask(TASK_KEY_STOCK_AUTO_REFRESH);
+    g_task->DeleteTask(TASK_KEY_STOCK_HISTORY_INIT);
+    g_task->DeleteTask(TASK_KEY_STOCK_HISTORY_REFRESH);
     ClearAllCodes();
     m_stockConfig.datas.clear();
 }
@@ -393,6 +638,121 @@ void LDataManager::IsDisplayAlias(bool flag)
 bool LDataManager::IsDisplayAlias() const
 {
     return m_stockConfig.isDisplayAlias;
+}
+
+void LDataManager::HistoryDays(int days)
+{
+    if (days < 1)
+    {
+        days = 1;
+    }
+    if (days > 5)
+    {
+        days = 5;
+    }
+    const int oldDays = m_stockConfig.historyDays;
+    m_stockConfig.historyDays = days;
+
+    // 天数变了就必须立刻重拉：缓存里的序列是按旧天数截取的，
+    // 不重拉的话走势图要等下一个 60 秒周期才更新，用户会以为设置没生效。
+    if (days != oldDays && IsDrawHistoryGraph())
+    {
+        // 先清掉旧天数的缓存，避免渲染侧在新数据回来前继续显示旧跨度的曲线。
+        // 清空后 UI 侧 GetHistoryPrices 返回空序列，绘制侧按"无图"处理，不会画错数据。
+        ClearHistoryPrices();
+        // interval=0 的首拉任务执行完由 TaskManager 自动删除；key 已存在时 AddTask 返回 FALSE，忽略即可。
+        g_task->AddTask(TASK_KEY_STOCK_HISTORY_INIT, 0, OnRefreshStockHistoryData);
+    }
+}
+
+int LDataManager::HistoryDays() const
+{
+    return m_stockConfig.historyDays;
+}
+
+void LDataManager::HistoryGraphMode(int mode)
+{
+    if (mode < 0)
+    {
+        mode = 0;
+    }
+    if (mode > 1)
+    {
+        mode = 1;
+    }
+    const int oldMode = m_stockConfig.historyGraphMode;
+    m_stockConfig.historyGraphMode = mode;
+    // 模式切换只影响渲染方式，数据本身不用重拉（两种模式共用同一份分时数据）
+    (void)oldMode;
+}
+
+int LDataManager::HistoryGraphMode() const
+{
+    return m_stockConfig.historyGraphMode;
+}
+
+void LDataManager::HistoryGraphStyle(int style)
+{
+    if (style < 0)
+    {
+        style = 0;
+    }
+    if (style > 1)
+    {
+        style = 1;
+    }
+    m_stockConfig.historyGraphStyle = style;
+}
+
+int LDataManager::HistoryGraphStyle() const
+{
+    return m_stockConfig.historyGraphStyle;
+}
+
+void LDataManager::HistoryGraphColorDark(COLORREF color)
+{
+    m_stockConfig.historyGraphColorDark = color;
+}
+
+COLORREF LDataManager::HistoryGraphColorDark() const
+{
+    return m_stockConfig.historyGraphColorDark;
+}
+
+void LDataManager::HistoryGraphColorLight(COLORREF color)
+{
+    m_stockConfig.historyGraphColorLight = color;
+}
+
+COLORREF LDataManager::HistoryGraphColorLight() const
+{
+    return m_stockConfig.historyGraphColorLight;
+}
+
+void LDataManager::HistoryGraphDashedBox(bool flag)
+{
+    m_stockConfig.historyGraphDashedBox = flag;
+}
+
+bool LDataManager::HistoryGraphDashedBox() const
+{
+    return m_stockConfig.historyGraphDashedBox;
+}
+
+void LDataManager::IsDrawHistoryGraph(bool flag)
+{
+    m_stockConfig.isDrawHistoryGraph = flag;
+    // 打开开关时立刻拉一次分时，否则要等下一个 60 秒周期，走势图会先空一段时间。
+    // interval=0 的任务执行完由 TaskManager 自动删除；key 已存在时 AddTask 返回 FALSE，忽略即可。
+    if (flag)
+    {
+        g_task->AddTask(TASK_KEY_STOCK_HISTORY_INIT, 0, OnRefreshStockHistoryData);
+    }
+}
+
+bool LDataManager::IsDrawHistoryGraph() const
+{
+    return m_stockConfig.isDrawHistoryGraph;
 }
 
 void LDataManager::IsScrollEnable(bool flag)
@@ -526,6 +886,21 @@ void LDataManager::InitConfig()
     m_stockConfig.isDisplayCostProfitPrice = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, true);
     m_stockConfig.isDisplayCostProfitPercent = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, true);
     m_stockConfig.isDisplayAlias = pConfig->ReadBool(KEY_CFG_DISPLAY_ALIAS, false);
+    m_stockConfig.isDrawHistoryGraph = pConfig->ReadBool(KEY_CFG_DRAW_HISTORY_GRAPH, false);
+    m_stockConfig.historyDays = (int)pConfig->ReadLong(KEY_CFG_HISTORY_DAYS, 5);
+    if (m_stockConfig.historyDays < 1)
+    {
+        m_stockConfig.historyDays = 1;
+    }
+    if (m_stockConfig.historyDays > 5)
+    {
+        m_stockConfig.historyDays = 5;
+    }
+    m_stockConfig.historyGraphMode = (int)pConfig->ReadLong(KEY_CFG_HISTORY_GRAPH_MODE, 0);
+    m_stockConfig.historyGraphStyle = (int)pConfig->ReadLong(KEY_CFG_HISTORY_GRAPH_STYLE, 1);
+    m_stockConfig.historyGraphColorDark = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_COLOR_DARK, (long)RGB(110, 110, 110));
+    m_stockConfig.historyGraphColorLight = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_COLOR_LIGHT, (long)RGB(198, 198, 198));
+    m_stockConfig.historyGraphDashedBox = pConfig->ReadBool(KEY_CFG_GRAPH_DASHED_BOX, false);
     m_stockConfig.isScrollEnable = pConfig->ReadBool(KEY_CFG_SCROLL_ENABLE, false);
     m_stockConfig.scrollPageSize = pConfig->Read(KEY_CFG_SCROLL_PAGE_SIZE, DEFAULT_SCROLL_PAGE_SIZE);
     m_stockConfig.scrollInterval = pConfig->Read(KEY_CFG_SCROLL_INTERVAL, DEFAULT_SCROLL_INTERVAL);
@@ -543,6 +918,9 @@ void LDataManager::InitTasks()
         g_task->AddTask(TASK_KEY_INIT_LOAD, 0, OnRefreshStockRealtimeData);
     }
     g_task->AddTask(TASK_KEY_STOCK_AUTO_REFRESH, RealtimeRefreshFreq() * 1000L, OnRefreshStockRealtimeData);
+    // 5 日分时（走势图背景）：先立刻拉一次（interval=0 的一次性任务，执行完自动删除），之后每 60 秒刷新
+    g_task->AddTask(TASK_KEY_STOCK_HISTORY_INIT, 0, OnRefreshStockHistoryData);
+    g_task->AddTask(TASK_KEY_STOCK_HISTORY_REFRESH, STOCK_HISTORY_REFRESH_INTERVAL_MS, OnRefreshStockHistoryData);
     // g_task->AddTask(TASK_KEY_STOCK_TIMELINE_AUTO_REFRESH, 1000L, OnRefreshStockTimelineData);
     // g_task->EnableTask(TASK_KEY_STOCK_TIMELINE_AUTO_REFRESH, false);
 }
@@ -560,6 +938,21 @@ void LDataManager::ReLoadConfig()
     m_stockConfig.isDisplayCostProfitPrice = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, true);
     m_stockConfig.isDisplayCostProfitPercent = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, true);
     m_stockConfig.isDisplayAlias = pConfig->ReadBool(KEY_CFG_DISPLAY_ALIAS, false);
+    m_stockConfig.isDrawHistoryGraph = pConfig->ReadBool(KEY_CFG_DRAW_HISTORY_GRAPH, false);
+    m_stockConfig.historyDays = (int)pConfig->ReadLong(KEY_CFG_HISTORY_DAYS, 5);
+    if (m_stockConfig.historyDays < 1)
+    {
+        m_stockConfig.historyDays = 1;
+    }
+    if (m_stockConfig.historyDays > 5)
+    {
+        m_stockConfig.historyDays = 5;
+    }
+    m_stockConfig.historyGraphMode = (int)pConfig->ReadLong(KEY_CFG_HISTORY_GRAPH_MODE, 0);
+    m_stockConfig.historyGraphStyle = (int)pConfig->ReadLong(KEY_CFG_HISTORY_GRAPH_STYLE, 1);
+    m_stockConfig.historyGraphColorDark = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_COLOR_DARK, (long)RGB(110, 110, 110));
+    m_stockConfig.historyGraphColorLight = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_COLOR_LIGHT, (long)RGB(198, 198, 198));
+    m_stockConfig.historyGraphDashedBox = pConfig->ReadBool(KEY_CFG_GRAPH_DASHED_BOX, false);
     m_stockConfig.isScrollEnable = pConfig->ReadBool(KEY_CFG_SCROLL_ENABLE, false);
     m_stockConfig.scrollPageSize = pConfig->Read(KEY_CFG_SCROLL_PAGE_SIZE, DEFAULT_SCROLL_PAGE_SIZE);
     m_stockConfig.scrollInterval = pConfig->Read(KEY_CFG_SCROLL_INTERVAL, DEFAULT_SCROLL_INTERVAL);
@@ -600,6 +993,13 @@ void LDataManager::SaveConfig()
     pConfig->Write(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, m_stockConfig.isDisplayCostProfitPrice);
     pConfig->Write(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, m_stockConfig.isDisplayCostProfitPercent);
     pConfig->Write(KEY_CFG_DISPLAY_ALIAS, m_stockConfig.isDisplayAlias);
+    pConfig->Write(KEY_CFG_DRAW_HISTORY_GRAPH, m_stockConfig.isDrawHistoryGraph);
+    pConfig->Write(KEY_CFG_HISTORY_DAYS, m_stockConfig.historyDays);
+    pConfig->Write(KEY_CFG_HISTORY_GRAPH_MODE, m_stockConfig.historyGraphMode);
+    pConfig->Write(KEY_CFG_HISTORY_GRAPH_STYLE, m_stockConfig.historyGraphStyle);
+    pConfig->Write(KEY_CFG_GRAPH_COLOR_DARK, (long)m_stockConfig.historyGraphColorDark);
+    pConfig->Write(KEY_CFG_GRAPH_COLOR_LIGHT, (long)m_stockConfig.historyGraphColorLight);
+    pConfig->Write(KEY_CFG_GRAPH_DASHED_BOX, m_stockConfig.historyGraphDashedBox);
     pConfig->Write(KEY_CFG_SCROLL_ENABLE, m_stockConfig.isScrollEnable);
     pConfig->Write(KEY_CFG_SCROLL_PAGE_SIZE, m_stockConfig.scrollPageSize);
     pConfig->Write(KEY_CFG_SCROLL_INTERVAL, m_stockConfig.scrollInterval);
@@ -1247,4 +1647,151 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
     }
 
     yyjson_doc_free(doc);
+}
+
+StockHistorySeries LDataManager::GetHistoryPrices(const wxString &code) const
+{
+    std::lock_guard<std::mutex> lock(m_mtxHistory);
+    auto it = m_historyPrices.find(code);
+    if (it == m_historyPrices.end())
+    {
+        return StockHistorySeries{};
+    }
+    return it->second;
+}
+
+bool LDataManager::HasHistoryPrices(const wxString &code) const
+{
+    std::lock_guard<std::mutex> lock(m_mtxHistory);
+    auto it = m_historyPrices.find(code);
+    return it != m_historyPrices.end() && it->second.totalPoints() >= 2;
+}
+
+void LDataManager::ClearHistoryPrices()
+{
+    std::lock_guard<std::mutex> lock(m_mtxHistory);
+    m_historyPrices.clear();
+}
+
+// 单只股票/期货的分时拉取。任何失败都返回 false，由调用侧保留上一份缓存
+bool LDataManager::FetchHistoryPrices(const wxString &code, StockHistorySeries &out)
+{
+    try
+    {
+        if (code.empty())
+        {
+            return false;
+        }
+
+        int days = HistoryDays();
+        if (days < 1)
+        {
+            days = 1;
+        }
+        if (days > STOCK_HISTORY_MAX_DAYS)
+        {
+            days = STOCK_HISTORY_MAX_DAYS;
+        }
+
+        const MarketType type = market(code);
+        wxString url;
+        if (IsStockKLineMarket(type))
+        {
+            const int dataLen = days * STOCK_HISTORY_KLINE_POINTS_PER_DAY;
+            url = HISTORY_STOCK_KLINE_URL + code +
+                  wxString::Format(wxT("&scale=5&ma=no&datalen=%d"), dataLen);
+        }
+        else if (type == MarketType::MarketType_NF || type == MarketType::MarketType_CFF)
+        {
+            const wxString symbol = (type == MarketType::MarketType_NF)
+                                        ? UtilStringHlp::remove(code, wxT("nf_"))
+                                        : UtilStringHlp::remove(code, wxT("CFF_RE_"));
+            url = HISTORY_FUTURES_URL_PREFIX + symbol + HISTORY_FUTURES_URL_MID + symbol;
+        }
+        else
+        {
+            return false;
+        }
+
+        CString strHeaders = _T("Referer: https://finance.sina.com.cn");
+        std::string raw;
+        if (!UtilNetHlp::GetURL(url.ToStdWstring(), raw, false, WEB_USERAGENT, strHeaders, strHeaders.GetLength()) || raw.empty())
+        {
+            LLOG_WARN_F("FetchHistoryPrices GetURL failed: %s", url.ToUTF8().data());
+            return false;
+        }
+
+        std::string json;
+        if (!ExtractJsonArray(raw, json))
+        {
+            LLOG_WARN_F("FetchHistoryPrices no json array: %s", url.ToUTF8().data());
+            return false;
+        }
+
+        const bool isFutures = (type == MarketType::MarketType_NF || type == MarketType::MarketType_CFF);
+        StockHistorySeries series = isFutures ? ParseFuturesFourDaysPrices(json, days) : ParseStockKLinePrices(json);
+        if (series.totalPoints() < 2)
+        {
+            LLOG_WARN_F("FetchHistoryPrices too few points (%d): %s", static_cast<int>(series.totalPoints()), code.ToUTF8().data());
+            return false;
+        }
+
+        out = std::move(series);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+void LDataManager::RefreshHistoryPrices()
+{
+    try
+    {
+        // 走势图关着就不拉：分时是纯展示数据，不参与行情计算，
+        // 开关关闭时每分钟为每只股票发一次请求纯属浪费（与实时刷新的闭市退避是同一套省流思路）
+        if (!IsDrawHistoryGraph())
+        {
+            return;
+        }
+
+        const wxArrayString codes = GetAllCodes();
+        if (codes.empty())
+        {
+            ClearHistoryPrices();
+            return;
+        }
+
+        for (size_t i = 0; i < codes.GetCount(); ++i)
+        {
+            const wxString code = codes[i];
+            StockHistorySeries prices;
+            // 网络失败/字段缺失/市场不支持：保留上一份缓存，不清空
+            if (!FetchHistoryPrices(code, prices))
+            {
+                continue;
+            }
+            std::lock_guard<std::mutex> lock(m_mtxHistory);
+            m_historyPrices[code] = std::move(prices);
+        }
+
+        // 剔除已从自选删除的股票，避免缓存随增删无限增长
+        std::lock_guard<std::mutex> lock(m_mtxHistory);
+        for (auto it = m_historyPrices.begin(); it != m_historyPrices.end();)
+        {
+            if (codes.Index(it->first) == wxNOT_FOUND)
+            {
+                it = m_historyPrices.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+    catch (...)
+    {
+        LLOG_WARN("RefreshHistoryPrices failed");
+    }
 }

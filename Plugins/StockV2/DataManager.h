@@ -9,11 +9,37 @@
 #define TASK_KEY_INIT_LOAD "INIT_STOCK_DATA"
 #define TASK_KEY_STOCK_AUTO_REFRESH "TASK_AUTO_REFRESH_STOCK_DATA"
 #define TASK_KEY_STOCK_TIMELINE_AUTO_REFRESH "TASK_AUTO_REFRESH_STOCK_TIMELINE_DATA"
+#define TASK_KEY_STOCK_HISTORY_INIT "INIT_STOCK_HISTORY_DATA"
+#define TASK_KEY_STOCK_HISTORY_REFRESH "TASK_AUTO_REFRESH_STOCK_HISTORY_DATA"
 
 #define STOCK_DISPLAY_ITEM_MAX 99
 
 // 默认刷新频率
 constexpr unsigned int DEFAULT_STOCK_REFRESH_FREQ = 10;
+// 5 日分时（走势图数据）刷新间隔，单位毫秒
+constexpr unsigned int STOCK_HISTORY_REFRESH_INTERVAL_MS = 60 * 1000;
+// 5 分钟粒度下一个交易日的点数（A股每天约 48 根），historyDays * 该值 = 要拉的 K 线根数
+// （接口上限 1900，2000+ 返回空；5 天 = 240 根，实测 sz002086 / sh515880 正常）
+constexpr int STOCK_HISTORY_KLINE_POINTS_PER_DAY = 48;
+// 最多保留的分时交易日数，与配置项 /stock/history_days 的 1..5 区间一致
+constexpr int STOCK_HISTORY_MAX_DAYS = 5;
+
+// 分时走势序列：按交易日分组，用于「固定时间轴 + 未来留白」的渲染。
+// days 里每一项是某个交易日的价格序列（时间升序）；slotsPerDay 是「满一天」应有的槽位数，
+// 最后一天若尚未收盘，其点数会少于 slotsPerDay，渲染侧据此在右侧留白。
+struct StockHistorySeries
+{
+    std::vector<std::vector<double>> days;
+    int slotsPerDay{0};                       // 每日满槽数（0 = 未知，按实际点数铺满）
+    bool empty() const { return days.empty(); }
+    size_t totalPoints() const
+    {
+        size_t n = 0;
+        for (const auto &d : days) { n += d.size(); }
+        return n;
+    }
+};
+
 // 默认K线图宽度
 constexpr unsigned int DEFAULT_KLINE_VIEW_W = 600;
 // 默认K线图高度
@@ -197,6 +223,25 @@ public:
     void IsDisplayCostProfitPercent(bool flag);
     bool IsDisplayAlias() const;
     void IsDisplayAlias(bool flag);
+    // 走势图显示天数（1~5）
+    int HistoryDays() const;
+    // 走势图渲染模式：0=铺满（数据铺满整个宽度，视觉饱满），1=固定时间轴（按真实时间留白，末尾贴右）
+    int HistoryGraphMode() const;
+    void HistoryGraphMode(int mode);
+    // 走势图样式：0=折线（只画线条），1=面积（线条下方实心填充）
+    int HistoryGraphStyle() const;
+    void HistoryGraphStyle(int style);
+    // 面积图颜色：深色/浅色模式各一套（COLORREF）
+    COLORREF HistoryGraphColorDark() const;
+    void HistoryGraphColorDark(COLORREF color);
+    COLORREF HistoryGraphColorLight() const;
+    void HistoryGraphColorLight(COLORREF color);
+    // 是否显示面积图虚线外框
+    bool HistoryGraphDashedBox() const;
+    void HistoryGraphDashedBox(bool flag);
+    void HistoryDays(int days);
+    bool IsDrawHistoryGraph() const;
+    void IsDrawHistoryGraph(bool flag);
     bool IsScrollEnable() const;
     void IsScrollEnable(bool flag);
     int ScrollPageSize() const;
@@ -239,10 +284,27 @@ public:
     bool DeleteStockByCode(const wxString& code);
     bool SetStockPosition(const StockDataPtr ptr, size_t pos);
 
+    // ==================== 5 日分时（走势图数据源） ====================
+    // 取某只股票的 5 日分时价格序列，按时间升序（index 0 最早）。
+    // 返回的是值拷贝：UI 线程（DrawItem）拿到快照后不再持锁，刷新线程可以随时覆盖缓存。
+    // 序列已按 HistoryDays() 截成「最近 N 个交易日」，绘制侧直接用即可，不需要再按日切分。
+    // 还没有拉取成功（首次请求未回来 / 网络失败 / 该市场不支持）时返回空 vector，调用侧按无数据处理。
+    StockHistorySeries GetHistoryPrices(const wxString &code) const;
+    // 是否已有可用的分时缓存（不拷贝序列），给绘制侧判断要不要等数据
+    bool HasHistoryPrices(const wxString &code) const;
+    // 立即刷新全部自选股的分时缓存（同步发网络请求，勿在 UI 线程直接调用）。
+    // 由任务 TASK_KEY_STOCK_HISTORY_INIT（首拉一次）与 TASK_KEY_STOCK_HISTORY_REFRESH（60 秒周期）调用。
+    void RefreshHistoryPrices();
+    // 清空分时缓存
+    void ClearHistoryPrices();
+
     static void OnRefreshStockTimelineData(const std::string& callback_id, const std::string& data);
 
 private:
     LDataManager();
+
+    // 拉取单只股票/期货的分时序列：成功返回 true 并填充 out，失败返回 false（调用侧保留旧缓存）
+    bool FetchHistoryPrices(const wxString &code, StockHistorySeries &out);
 
 private:
     struct StockConfgInfo
@@ -265,6 +327,19 @@ private:
         bool isDisplayCostProfitPercent;
         // 是否显示别名（以股票代码代替名称）
         bool isDisplayAlias;
+        // 是否绘制历史走势图背景（横向滚动图）
+        bool isDrawHistoryGraph;
+        // 走势图显示天数，1~5
+        int historyDays;
+        // 走势图渲染模式（0=铺满 / 1=固定时间轴）
+        int historyGraphMode;
+        // 走势图样式（0=折线 / 1=面积）
+        int historyGraphStyle;
+        // 面积图颜色（深色模式 / 浅色模式）
+        COLORREF historyGraphColorDark;
+        COLORREF historyGraphColorLight;
+        // 是否显示面积图虚线外框（默认 false）
+        bool historyGraphDashedBox;
         // 是否开启滚动显示
         bool isScrollEnable;
         // 滚动显示每页数量
@@ -307,6 +382,12 @@ private:
     std::string m_refreshLastSignature;
     // 最近一次实际下发到任务的间隔（0 = 未知，需重下发），避免每轮都去动任务表
     unsigned int m_refreshAppliedMs{0};
+    // ---- 5 日分时缓存 ----
+    // code -> 价格序列（时间升序，index 0 最早，已按 historyDays 截成最近 N 个交易日）。
+    // UI 线程每次重绘都会读，任务线程写入。用独立锁而不是 m_mtxData：拉取分时要发网络请求（秒级），
+    // 不能占着自选列表的锁，否则 UI 的增删改与遍历会被长时间阻塞。两把锁互不嵌套，无死锁风险。
+    mutable std::mutex m_mtxHistory;
+    std::map<wxString, StockHistorySeries> m_historyPrices;
     //wxVector<wxSharedPtr<LStockData>> m_cacheStocks;
     //StockDataMap m_cacheStockMap;
 };

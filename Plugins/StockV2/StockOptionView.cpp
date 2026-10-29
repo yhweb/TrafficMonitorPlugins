@@ -11,6 +11,7 @@
 #include <wx/valtext.h>
 #include <wx/menu.h>
 #include <wx/combobox.h>
+#include <wx/choice.h>
 #include <wx/filedlg.h>
 #include <wx/txtstrm.h>
 #include <wx/wfstream.h>
@@ -230,6 +231,15 @@ void LStockOptionView::InitUI()
     optSizer->Add(m_colorCheck, 0);
     optSizer->Add(m_priorityDisplayChangedCheck, 0, wxLEFT, 15);
     optSizer->Add(m_isDisplayStockNameCheck, 0, wxLEFT, 15);
+    // 走势图显示天数（1~5天）
+    wxArrayString historyDaysOpts;
+    for (int d = 1; d <= 5; d++)
+    {
+        historyDaysOpts.Add(wxString::Format("%d天", d));
+    }
+    m_historyDaysChoice = new wxChoice(rootPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, historyDaysOpts);
+    optSizer->Add(new wxStaticText(rootPanel, wxID_ANY, "走势天数"), 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 15);
+    optSizer->Add(m_historyDaysChoice, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 4);
     // optSizer->Add(m_alertCheck, 0, wxLEFT, 15);
     settingsBoxSizer->Add(optSizer, 0);
 
@@ -241,11 +251,31 @@ void LStockOptionView::InitUI()
     m_isDisplayCostProfitPriceCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示价差");
     m_isDisplayCostProfitPercentCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示涨跌幅");
     m_isDisplayAliasCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示别名");
+    m_isDrawHistoryGraphCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示走势图");
     costOptSizer->Add(m_isDisplayCostCheck, 0);
     costOptSizer->Add(m_isDisplayCostProfitPriceCheck, 0, wxLEFT, 15);
     costOptSizer->Add(m_isDisplayCostProfitPercentCheck, 0, wxLEFT, 15);
     costOptSizer->Add(m_isDisplayAliasCheck, 0, wxLEFT, 15);
+    costOptSizer->Add(m_isDrawHistoryGraphCheck, 0, wxLEFT, 15);
     settingsBoxSizer->Add(costOptSizer, 0);
+
+    settingsBoxSizer->AddSpacer(8);
+
+    // 面积图颜色（深色/浅色模式各一个颜色选择器）+ 虚线框开关
+    wxBoxSizer *graphColorSizer = new wxBoxSizer(wxHORIZONTAL);
+    {
+        COLORREF cfgDark = g_data.HistoryGraphColorDark();
+        COLORREF cfgLight = g_data.HistoryGraphColorLight();
+        m_colourGraphDark = new wxColourPickerCtrl(rootPanel, wxID_ANY, wxColour(GetRValue(cfgDark), GetGValue(cfgDark), GetBValue(cfgDark)));
+        m_colourGraphLight = new wxColourPickerCtrl(rootPanel, wxID_ANY, wxColour(GetRValue(cfgLight), GetGValue(cfgLight), GetBValue(cfgLight)));
+    }
+    m_isGraphDashedBoxCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示虚线框");
+    graphColorSizer->Add(new wxStaticText(rootPanel, wxID_ANY, "深色走势图颜色:"), 0, wxALIGN_CENTER_VERTICAL);
+    graphColorSizer->Add(m_colourGraphDark, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 5);
+    graphColorSizer->Add(new wxStaticText(rootPanel, wxID_ANY, "浅色走势图颜色:"), 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 15);
+    graphColorSizer->Add(m_colourGraphLight, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 5);
+    graphColorSizer->Add(m_isGraphDashedBoxCheck, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 20);
+    settingsBoxSizer->Add(graphColorSizer, 0);
 
     settingsBoxSizer->AddSpacer(8);
 
@@ -303,10 +333,26 @@ void LStockOptionView::LoadOptions()
     m_colorCheck->SetValue(g_data.IsDisplayColor());
     m_priorityDisplayChangedCheck->SetValue(g_data.IsPriorityDisplayChanged());
     m_isDisplayStockNameCheck->SetValue(g_data.IsDisplayName());
+    {
+        int historyDays = g_data.HistoryDays();
+        if (historyDays < 1 || historyDays > 5)
+        {
+            historyDays = 5;
+        }
+        m_historyDaysChoice->Select(historyDays - 1);
+    }
     m_isDisplayCostCheck->SetValue(g_data.IsDisplayCost());
     m_isDisplayCostProfitPriceCheck->SetValue(g_data.IsDisplayCostProfitPrice());
     m_isDisplayCostProfitPercentCheck->SetValue(g_data.IsDisplayCostProfitPercent());
     m_isDisplayAliasCheck->SetValue(g_data.IsDisplayAlias());
+    m_isDrawHistoryGraphCheck->SetValue(g_data.IsDrawHistoryGraph());
+    {
+        COLORREF cfgDark = g_data.HistoryGraphColorDark();
+        COLORREF cfgLight = g_data.HistoryGraphColorLight();
+        m_colourGraphDark->SetColour(wxColour(GetRValue(cfgDark), GetGValue(cfgDark), GetBValue(cfgDark)));
+        m_colourGraphLight->SetColour(wxColour(GetRValue(cfgLight), GetGValue(cfgLight), GetBValue(cfgLight)));
+    }
+    m_isGraphDashedBoxCheck->SetValue(g_data.HistoryGraphDashedBox());
     bool scrollEnable = g_data.IsScrollEnable();
     m_isScrollEnableCheck->SetValue(scrollEnable);
     m_scrollPageSizeSpin->SetValue(g_data.ScrollPageSize());
@@ -366,6 +412,18 @@ void LStockOptionView::BindAllEvents()
                                         { g_data.IsPriorityDisplayChanged(event.IsChecked()); });
     m_isDisplayStockNameCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
                                     { g_data.IsDisplayName(event.IsChecked()); });
+    m_historyDaysChoice->Bind(wxEVT_CHOICE, [](wxCommandEvent &event)
+                              {
+        int days = event.GetSelection() + 1;
+        if (days < 1)
+        {
+            days = 1;
+        }
+        if (days > 5)
+        {
+            days = 5;
+        }
+        g_data.HistoryDays(days); });
     m_isDisplayCostCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
                                { g_data.IsDisplayCost(event.IsChecked()); });
     m_isDisplayCostProfitPriceCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
@@ -374,6 +432,18 @@ void LStockOptionView::BindAllEvents()
                                             { g_data.IsDisplayCostProfitPercent(event.IsChecked()); });
     m_isDisplayAliasCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
                                 { g_data.IsDisplayAlias(event.IsChecked()); });
+    m_isDrawHistoryGraphCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
+                                    { g_data.IsDrawHistoryGraph(event.IsChecked()); });
+    m_colourGraphDark->Bind(wxEVT_COLOURPICKER_CHANGED, [](wxColourPickerEvent &event)
+                            {
+        wxColour c = event.GetColour();
+        g_data.HistoryGraphColorDark(RGB(c.Red(), c.Green(), c.Blue())); });
+    m_colourGraphLight->Bind(wxEVT_COLOURPICKER_CHANGED, [](wxColourPickerEvent &event)
+                             {
+        wxColour c = event.GetColour();
+        g_data.HistoryGraphColorLight(RGB(c.Red(), c.Green(), c.Blue())); });
+    m_isGraphDashedBoxCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
+                                  { g_data.HistoryGraphDashedBox(event.IsChecked()); });
     m_isScrollEnableCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event)
                                 {
         bool en = event.IsChecked();

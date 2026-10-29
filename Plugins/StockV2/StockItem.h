@@ -1,132 +1,149 @@
-#pragma once
+ï»¿#pragma once
 #include <PluginInterface.h>
+#include <list>
+#include <vector>
 class LStockItem : public IPluginItem
 {
 public:
-    int index;      // µ±Ç°ÏÔÊ¾µÄ¹ÉÆ±ÔÚÁĞ±íÖĞµÄÏÂ±ê£¨¹ö¶¯Ä£Ê½ÏÂ»á±ä»¯£©
-    int slotIndex;  // ÏÔÊ¾²ÛÎ»ÏÂ±ê£¨¹Ì¶¨²»±ä£¬ÓÃÓÚÉú³ÉÎÈ¶¨µÄ GetItemId£©
+    int index;      // å½“å‰æ˜¾ç¤ºçš„è‚¡ç¥¨åœ¨åˆ—è¡¨ä¸­çš„ä¸‹æ ‡ï¼ˆæ»šåŠ¨æ¨¡å¼ä¸‹ä¼šå˜åŒ–ï¼‰
+    int slotIndex;  // æ˜¾ç¤ºæ§½ä½ä¸‹æ ‡ï¼ˆå›ºå®šä¸å˜ï¼Œç”¨äºç”Ÿæˆç¨³å®šçš„ GetItemIdï¼‰
     bool enable;
 
 private:
     CString GetDisplayContent(wxSharedPtr<STOCK::LStockData> data, bool include_name) const;
     CString GetCostLabelContent(wxSharedPtr<STOCK::LStockData> data) const;
     CString GetCostDirContent(wxSharedPtr<STOCK::LStockData> data) const;
+    // å†å²èµ°åŠ¿å›¾èƒŒæ™¯ï¼ˆæ—¶é—´è½´é“ºæ»¡å®½åº¦ï¼‰ï¼šåœ¨æ–‡å­—ä¸‹å±‚ç»˜åˆ¶ä»·æ ¼èµ°åŠ¿
+    void DrawHistoryGraph(CDC* pDC, const CRect& rect, bool dark_mode);
+
+    // è·å–èµ°åŠ¿å›¾å†å²ä»·æ ¼åºåˆ—ï¼ˆæ—¶é—´ä»æ—§åˆ°æ–°ï¼Œæœ«ä½=æœ€æ–°ï¼‰
+    // TODO: å¾…ä»»åŠ¡Aæ¥å…¥çœŸå®åˆ†æ—¶æ•°æ®ï¼ˆç›®å‰è¿”å›æœ¬åœ°ç”Ÿæˆçš„ 5 å¤©æ¨¡æ‹Ÿåºåˆ—ï¼‰
+    StockHistorySeries GetHistoryPrices();
+
+    // å†å²ä»·æ ¼åºåˆ—ï¼ˆæ—¶é—´ä»æ—§åˆ°æ–°ï¼Œæœ«ä½=æœ€æ–°ï¼‰ï¼Œç”± GetHistoryPrices ç”Ÿæˆå¹¶ç¼“å­˜
+    StockHistorySeries m_historySeries;
+    // åˆ†æ—¶ç¼“å­˜é”®ï¼šæ»šåŠ¨æ˜¾ç¤ºæ—¶ index ä¼šå˜ï¼Œå¤©æ•°ä¹Ÿå¯è¢«ç”¨æˆ·æ”¹ï¼Œé¡»ä¸ç¼“å­˜ä¸€èµ·è®°å½•
+    wxString m_historyCacheCode;
+    int m_historyCacheDays{0};
+    // é™é‡‡æ ·åçš„é€åƒç´ åˆ—å–æ ·å€¼ï¼ˆå¤§å° = ç»˜åˆ¶åŒºåŸŸåƒç´ å®½ï¼‰ï¼Œæ¯æ¬¡é‡ç»˜æŒ‰å½“å‰æ•°æ®é‡ç®—
+    // ä»…ä½œå¤ç”¨ç¼“å†²é¿å…åå¤åˆ†é…ï¼šä¸åšç¼“å­˜é”®ï¼Œæ¥å…¥çœŸå®æ•°æ®åä¸ä¼šè¯»åˆ°æ—§åˆ—
+    std::vector<double> m_historyColumns;
 
 public:
     /**
-     * @brief   »ñÈ¡ÏÔÊ¾ÏîÄ¿µÄÃû³Æ
+     * @brief   è·å–æ˜¾ç¤ºé¡¹ç›®çš„åç§°
      * @return  const wchar_t*
      */
     virtual const wchar_t* GetItemName() const override;
 
     /**
-     * @brief   »ñÈ¡ÏÔÊ¾ÏîÄ¿µÄÎ¨Ò»ID
+     * @brief   è·å–æ˜¾ç¤ºé¡¹ç›®çš„å”¯ä¸€ID
      * @return  const wchar_t*
      */
     virtual const wchar_t* GetItemId() const override;
 
     /**
-     * @brief   »ñÈ¡ÏîÄ¿±êÇ©µÄÎÄ±¾
+     * @brief   è·å–é¡¹ç›®æ ‡ç­¾çš„æ–‡æœ¬
      * @return  const wchar_t*
      */
     virtual const wchar_t* GetItemLableText() const override;
 
     /**
-     * @brief   »ñÈ¡ÏîÄ¿ÊıÖµµÄÎÄ±¾
-     * @detail  ÓÉÓÚ´Ëº¯Êı¿ÉÄÜ»á±»Æµ·±µ÷ÓÃ£¬Òò´Ë²»ÒªÔÚÕâÀï»ñÈ¡¼à¿ØÊı¾İ£¬
-     *  ¶øÊÇÔÚITMPlugin::DataRequiredº¯ÊıÖĞ»ñÈ¡Êı¾İºó±£´æÆğÀ´£¬È»ºóÔÚÕâÀï·µ»Ø»ñÈ¡µÄÊıÖµ
+     * @brief   è·å–é¡¹ç›®æ•°å€¼çš„æ–‡æœ¬
+     * @detail  ç”±äºæ­¤å‡½æ•°å¯èƒ½ä¼šè¢«é¢‘ç¹è°ƒç”¨ï¼Œå› æ­¤ä¸è¦åœ¨è¿™é‡Œè·å–ç›‘æ§æ•°æ®ï¼Œ
+     *  è€Œæ˜¯åœ¨ITMPlugin::DataRequiredå‡½æ•°ä¸­è·å–æ•°æ®åä¿å­˜èµ·æ¥ï¼Œç„¶ååœ¨è¿™é‡Œè¿”å›è·å–çš„æ•°å€¼
      * @return  const wchar_t*
      */
     virtual const wchar_t* GetItemValueText() const override;
 
     /**
-     * @brief   »ñÈ¡ÏîÄ¿ÊıÖµµÄÊ¾ÀıÎÄ±¾
-     * @detail  ´Ëº¯Êı·µ»ØµÄ×Ö·û´®µÄ³¤¶È»áÓÃÓÚ¼ÆËãÏÔÊ¾ÇøÓòµÄ¿í¶È
+     * @brief   è·å–é¡¹ç›®æ•°å€¼çš„ç¤ºä¾‹æ–‡æœ¬
+     * @detail  æ­¤å‡½æ•°è¿”å›çš„å­—ç¬¦ä¸²çš„é•¿åº¦ä¼šç”¨äºè®¡ç®—æ˜¾ç¤ºåŒºåŸŸçš„å®½åº¦
      * @return  const wchar_t*
      */
     virtual const wchar_t* GetItemValueSampleText() const override;
 
      /**
-      * @brief   ÏÔÊ¾ÇøÓòÊÇ·ñÓÉ²å¼ş×ÔĞĞ»æÖÆ
+      * @brief   æ˜¾ç¤ºåŒºåŸŸæ˜¯å¦ç”±æ’ä»¶è‡ªè¡Œç»˜åˆ¶
       * @detail
-      *  Èç¹û·µ»Øfalse£¬Ôò¸ù¾İGetItemLableTextºÍGetItemValueText·µ»ØµÄÎÄ±¾ÓÉÖ÷³ÌĞò»æÖÆÏÔÊ¾ÇøÓò£¬ÖØĞ´DrawItemº¯Êı½«²»Æğ×÷ÓÃ¡£
-      *  Èç¹ûÖØĞ´´Ëº¯Êı²¢·µ»Øtrue£¬Ôò±ØĞëÖØĞ´DrawItemº¯Êı²¢ÔÚÀïÃæÌí¼Ó»æÖÆÏÔÊ¾ÇøÓòµÄ´úÂë£¬
-      *  ´ËÊ±GetItemLableText¡¢GetItemValueTextºÍGetItemValueSampleTextµÄ·µ»ØÖµ½«±»Ö÷³ÌĞòºöÂÔ
+      *  å¦‚æœè¿”å›falseï¼Œåˆ™æ ¹æ®GetItemLableTextå’ŒGetItemValueTextè¿”å›çš„æ–‡æœ¬ç”±ä¸»ç¨‹åºç»˜åˆ¶æ˜¾ç¤ºåŒºåŸŸï¼Œé‡å†™DrawItemå‡½æ•°å°†ä¸èµ·ä½œç”¨ã€‚
+      *  å¦‚æœé‡å†™æ­¤å‡½æ•°å¹¶è¿”å›trueï¼Œåˆ™å¿…é¡»é‡å†™DrawItemå‡½æ•°å¹¶åœ¨é‡Œé¢æ·»åŠ ç»˜åˆ¶æ˜¾ç¤ºåŒºåŸŸçš„ä»£ç ï¼Œ
+      *  æ­¤æ—¶GetItemLableTextã€GetItemValueTextå’ŒGetItemValueSampleTextçš„è¿”å›å€¼å°†è¢«ä¸»ç¨‹åºå¿½ç•¥
       * @return  bool
       */
      virtual bool IsCustomDraw() const override;
 
      ///**
-     // * @brief   »ñÈ¡ÏÔÊ¾ÇøÓòµÄ¿í¶È
+     // * @brief   è·å–æ˜¾ç¤ºåŒºåŸŸçš„å®½åº¦
      // * @detail
-     // *  Ö»ÓĞµ±CustomDraw()º¯Êı·µ»ØtrueÊ±ÖØĞ´´Ëº¯Êı²ÅÓĞĞ§¡£
-     // *  ·µ»ØµÄÖµÎªDPIÎª96£¨100%£©Ê±µÄ¿í¶È£¬Ö÷³ÌĞò»á¸ù¾İµ±Ç°ÏµÍ³DPIµÄÉèÖÃ×Ô¶¯°´±ÈÀı·Å´ó£¬
-     // *  Òò´ËÄã²»ĞèÒªÎª²»Í¬µÄDPIÉèÖÃ·µ»Ø²»Í¬µÄÖµ¡£
-     // *  ĞèÒª×¢ÒâµÄÊÇ£¬ÕâÀïµÄ·µ»ØÖµ´ú±íÁË×Ô»æÇøÓòËùĞèÒªµÄ×îĞ¡¿í¶È£¬DrawItemº¯ÊıÖĞµÄ²ÎÊıwµÄÖµ¿ÉÄÜ»á´óÓÚÕâ¸öÖµ
+     // *  åªæœ‰å½“CustomDraw()å‡½æ•°è¿”å›trueæ—¶é‡å†™æ­¤å‡½æ•°æ‰æœ‰æ•ˆã€‚
+     // *  è¿”å›çš„å€¼ä¸ºDPIä¸º96ï¼ˆ100%ï¼‰æ—¶çš„å®½åº¦ï¼Œä¸»ç¨‹åºä¼šæ ¹æ®å½“å‰ç³»ç»ŸDPIçš„è®¾ç½®è‡ªåŠ¨æŒ‰æ¯”ä¾‹æ”¾å¤§ï¼Œ
+     // *  å› æ­¤ä½ ä¸éœ€è¦ä¸ºä¸åŒçš„DPIè®¾ç½®è¿”å›ä¸åŒçš„å€¼ã€‚
+     // *  éœ€è¦æ³¨æ„çš„æ˜¯ï¼Œè¿™é‡Œçš„è¿”å›å€¼ä»£è¡¨äº†è‡ªç»˜åŒºåŸŸæ‰€éœ€è¦çš„æœ€å°å®½åº¦ï¼ŒDrawItemå‡½æ•°ä¸­çš„å‚æ•°wçš„å€¼å¯èƒ½ä¼šå¤§äºè¿™ä¸ªå€¼
      // * @return  int
      // */
      //virtual int GetItemWidth() const override;
 
      /**
-      * @brief   ×Ô¶¨Òå»æÖÆÏÔÊ¾ÇøÓòµÄº¯Êı£¬Ö»ÓĞµ±CustomDraw()º¯Êı·µ»ØtrueÊ±ÖØĞ´´Ëº¯Êı²ÅÓĞĞ§
-      * @param   void * hDC »æÍ¼µÄÉÏÏÂÎÄ¾ä±ú
-      * @param   int x »æÍ¼µÄ¾ØĞÎÇøÓò
+      * @brief   è‡ªå®šä¹‰ç»˜åˆ¶æ˜¾ç¤ºåŒºåŸŸçš„å‡½æ•°ï¼Œåªæœ‰å½“CustomDraw()å‡½æ•°è¿”å›trueæ—¶é‡å†™æ­¤å‡½æ•°æ‰æœ‰æ•ˆ
+      * @param   void * hDC ç»˜å›¾çš„ä¸Šä¸‹æ–‡å¥æŸ„
+      * @param   int x ç»˜å›¾çš„çŸ©å½¢åŒºåŸŸ
       * @param   int y
       * @param   int w
       * @param   int h
-      * @param   bool dark_mode ÉîÉ«Ä£Ê½Îªtrue£¬Ç³É«Ä£Ê½Îªfalse
+      * @param   bool dark_mode æ·±è‰²æ¨¡å¼ä¸ºtrueï¼Œæµ…è‰²æ¨¡å¼ä¸ºfalse
       * @return  void
       */
      virtual void DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode) override;
 
      /**
-      * @brief   »ñÈ¡ÏÔÊ¾ÇøÓòµÄ¿í¶È
+      * @brief   è·å–æ˜¾ç¤ºåŒºåŸŸçš„å®½åº¦
       * @detail
-      *  Ö»ÓĞµ±CustomDraw()º¯Êı·µ»ØtrueÊ±ÖØĞ´´Ëº¯Êı²ÅÓĞĞ§¡£
-      *  ´Ëº¯ÊıºÍGetItemWidth²»Í¬£¬²å¼ş¿ÉÒÔ¸ù¾İ²ÎÊıhDCÀ´¼ÆËãĞèÒªµÄ¿í¶È£¬
-      *  Ëü·µ»ØµÄÊÇÊµ¼ÊµÄ¿í¶È£¬Ö÷³ÌĞò²»»á¸ù¾İµ±Ç°ÏµÍ³µÄDPI¶Ô·µ»ØÖµ½øĞĞ·Å´ó¡£
-      *  ĞèÒª×¢ÒâµÄÊÇ£¬ÕâÀïµÄ·µ»ØÖµ´ú±íÁË×Ô»æÇøÓòËùĞèÒªµÄ×îĞ¡¿í¶È£¬DrawItemº¯ÊıÖĞµÄ²ÎÊıwµÄÖµ¿ÉÄÜ»á´óÓÚÕâ¸öÖµ
-      * @param   void * hDC »æÍ¼µÄÉÏÏÂÎÄ¾ä±ú
+      *  åªæœ‰å½“CustomDraw()å‡½æ•°è¿”å›trueæ—¶é‡å†™æ­¤å‡½æ•°æ‰æœ‰æ•ˆã€‚
+      *  æ­¤å‡½æ•°å’ŒGetItemWidthä¸åŒï¼Œæ’ä»¶å¯ä»¥æ ¹æ®å‚æ•°hDCæ¥è®¡ç®—éœ€è¦çš„å®½åº¦ï¼Œ
+      *  å®ƒè¿”å›çš„æ˜¯å®é™…çš„å®½åº¦ï¼Œä¸»ç¨‹åºä¸ä¼šæ ¹æ®å½“å‰ç³»ç»Ÿçš„DPIå¯¹è¿”å›å€¼è¿›è¡Œæ”¾å¤§ã€‚
+      *  éœ€è¦æ³¨æ„çš„æ˜¯ï¼Œè¿™é‡Œçš„è¿”å›å€¼ä»£è¡¨äº†è‡ªç»˜åŒºåŸŸæ‰€éœ€è¦çš„æœ€å°å®½åº¦ï¼ŒDrawItemå‡½æ•°ä¸­çš„å‚æ•°wçš„å€¼å¯èƒ½ä¼šå¤§äºè¿™ä¸ªå€¼
+      * @param   void * hDC ç»˜å›¾çš„ä¸Šä¸‹æ–‡å¥æŸ„
       * @return  int
       */
      virtual int GetItemWidthEx(void* hDC) const override;
 
     /**
-     * @brief   µ±²å¼şÏÔÊ¾ÇøÓòÓĞÊó±êÊÂ¼şÊ±ÓÉÖ÷³ÌĞòµ÷ÓÃ
-     * @param   MouseEventType type Êó±êÊÂ¼şµÄÀàĞÍ
-     * @param   int x Êó±êÖ¸ÕëËùÔÚµÄx×ø±ê
-     * @param   int y Êó±êÖ¸ÕëËùÔÚµÄy×ø±ê
-     * @param   void* hWnd ²úÉú´ËÊó±êÊÂ¼şµÄ´°¿ÚµÄ¾ä±ú£¨Ö÷´°¿Ú»òÈÎÎñÀ¸´°¿Ú£©
-     * @param   int flag ÎªÈô¸ÉMouseEventFlagÃ¶¾Ù³£Á¿µÄ×éºÏ
-     * @return  int Èç¹û·µ»Ø·Ç0£¬ÔòÖ÷³ÌĞòÈÏÎª²å¼şÒÑ¾­¶Ô´ËÊó±êÊÂ¼ş×÷³öÁËÈ«²¿µÄÏìÓ¦£¬Ö÷³ÌĞò½«²»»áÔÙ¶Ô´ËÊó±êÊÂ¼ş×ö¶îÍâµÄÏìÓ¦¡£
-     *   ÀıÈçµ±typeÎªMT_RCLICKEDÊ±£¬Èç¹û³ÌĞò·µ»Ø0£¬Ôò»áµ¯³öÖ÷³ÌĞòÌá¹©µÄÓÒ¼ü²Ëµ¥£»¶ø·µ»Ø·Ç0Ê±£¬Ö÷³ÌĞò²»»áÔÙ×öÈÎºÎ´¦Àí¡£
+     * @brief   å½“æ’ä»¶æ˜¾ç¤ºåŒºåŸŸæœ‰é¼ æ ‡äº‹ä»¶æ—¶ç”±ä¸»ç¨‹åºè°ƒç”¨
+     * @param   MouseEventType type é¼ æ ‡äº‹ä»¶çš„ç±»å‹
+     * @param   int x é¼ æ ‡æŒ‡é’ˆæ‰€åœ¨çš„xåæ ‡
+     * @param   int y é¼ æ ‡æŒ‡é’ˆæ‰€åœ¨çš„yåæ ‡
+     * @param   void* hWnd äº§ç”Ÿæ­¤é¼ æ ‡äº‹ä»¶çš„çª—å£çš„å¥æŸ„ï¼ˆä¸»çª—å£æˆ–ä»»åŠ¡æ çª—å£ï¼‰
+     * @param   int flag ä¸ºè‹¥å¹²MouseEventFlagæšä¸¾å¸¸é‡çš„ç»„åˆ
+     * @return  int å¦‚æœè¿”å›é0ï¼Œåˆ™ä¸»ç¨‹åºè®¤ä¸ºæ’ä»¶å·²ç»å¯¹æ­¤é¼ æ ‡äº‹ä»¶ä½œå‡ºäº†å…¨éƒ¨çš„å“åº”ï¼Œä¸»ç¨‹åºå°†ä¸ä¼šå†å¯¹æ­¤é¼ æ ‡äº‹ä»¶åšé¢å¤–çš„å“åº”ã€‚
+     *   ä¾‹å¦‚å½“typeä¸ºMT_RCLICKEDæ—¶ï¼Œå¦‚æœç¨‹åºè¿”å›0ï¼Œåˆ™ä¼šå¼¹å‡ºä¸»ç¨‹åºæä¾›çš„å³é”®èœå•ï¼›è€Œè¿”å›é0æ—¶ï¼Œä¸»ç¨‹åºä¸ä¼šå†åšä»»ä½•å¤„ç†ã€‚
      */
     virtual int OnMouseEvent(MouseEventType type, int x, int y, void* hWnd, int flag) override;
 
     // /**
-    //  * @brief   µ±²å¼şÏÔÊ¾ÇøÓòÓĞ¼üÅÌÊÂ¼şÊ±ÓÉÖ÷³ÌĞòµ÷ÓÃ
-    //  * @param   int key °´ÏÂµÄ¼ü
-    //  * @param   bool ctrl ÊÇ·ñ°´ÏÂÁËCtrl¼ü
-    //  * @param   bool shift ÊÇ·ñ°´ÏÂÁËShift¼ü
-    //  * @param   bool alt ÊÇ·ñ°´ÏÂÁËAlt¼ü
-    //  * @param   void* hWnd ²úÉú´Ë¼üÅÌÊÂ¼şµÄ´°¿ÚµÄ¾ä±ú£¨Ö÷´°¿Ú»òÈÎÎñÀ¸´°¿Ú£©
-    //  * @param   int flag ÎªÈô¸ÉKeyboardEventFlagÃ¶¾Ù³£Á¿µÄ×éºÏ
-    //  * @return  int Èç¹û·µ»Ø·Ç0£¬ÔòÖ÷³ÌĞòÈÏÎª²å¼şÒÑ¾­¶Ô´Ë¼üÅÌÊÂ¼ş×÷³öÁËÈ«²¿µÄÏìÓ¦£¬Ö÷³ÌĞò½«²»»áÔÙ¶Ô´Ë¼üÅÌÊÂ¼ş×ö¶îÍâµÄÏìÓ¦¡£
+    //  * @brief   å½“æ’ä»¶æ˜¾ç¤ºåŒºåŸŸæœ‰é”®ç›˜äº‹ä»¶æ—¶ç”±ä¸»ç¨‹åºè°ƒç”¨
+    //  * @param   int key æŒ‰ä¸‹çš„é”®
+    //  * @param   bool ctrl æ˜¯å¦æŒ‰ä¸‹äº†Ctrlé”®
+    //  * @param   bool shift æ˜¯å¦æŒ‰ä¸‹äº†Shifté”®
+    //  * @param   bool alt æ˜¯å¦æŒ‰ä¸‹äº†Alté”®
+    //  * @param   void* hWnd äº§ç”Ÿæ­¤é”®ç›˜äº‹ä»¶çš„çª—å£çš„å¥æŸ„ï¼ˆä¸»çª—å£æˆ–ä»»åŠ¡æ çª—å£ï¼‰
+    //  * @param   int flag ä¸ºè‹¥å¹²KeyboardEventFlagæšä¸¾å¸¸é‡çš„ç»„åˆ
+    //  * @return  int å¦‚æœè¿”å›é0ï¼Œåˆ™ä¸»ç¨‹åºè®¤ä¸ºæ’ä»¶å·²ç»å¯¹æ­¤é”®ç›˜äº‹ä»¶ä½œå‡ºäº†å…¨éƒ¨çš„å“åº”ï¼Œä¸»ç¨‹åºå°†ä¸ä¼šå†å¯¹æ­¤é”®ç›˜äº‹ä»¶åšé¢å¤–çš„å“åº”ã€‚
     //  */
     // virtual int OnKeboardEvent(int key, bool ctrl, bool shift, bool alt, void* hWnd, int flag) override;
 
-    // //Ô¤ÁôµÄ½Ó¿Ú
+    // //é¢„ç•™çš„æ¥å£
     // virtual void* OnItemInfo(ItemInfoType, void* para1, void* para2) override;
 
     // /**
-    //  * @brief ÊÇ·ñÔÚÔÚÈÎÎñÀ¸ÖĞÏÔÊ¾´ËÏîÄ¿µÄ×ÊÔ´Õ¼ÓÃÍ¼
-    //  * @return 1£ºÏÔÊ¾£¬0£º²»ÏÔÊ¾
+    //  * @brief æ˜¯å¦åœ¨åœ¨ä»»åŠ¡æ ä¸­æ˜¾ç¤ºæ­¤é¡¹ç›®çš„èµ„æºå ç”¨å›¾
+    //  * @return 1ï¼šæ˜¾ç¤ºï¼Œ0ï¼šä¸æ˜¾ç¤º
     //  */
     // virtual int IsDrawResourceUsageGraph() const override;
 
     // /**
-    //  * @brief »ñÈ¡×ÊÔ´Õ¼ÓÃÍ¼µÄÖµ¡£µ±IsDrawResourceUsageGraphType·µ»ØÖµ²»Îª0Ê±ÓĞĞ§
-    //  * @return float ×ÊÔ´Õ¼ÓÃÍ¼µÄÖµ£¬·¶Î§Îª0.0~1.0¡£
+    //  * @brief è·å–èµ„æºå ç”¨å›¾çš„å€¼ã€‚å½“IsDrawResourceUsageGraphTypeè¿”å›å€¼ä¸ä¸º0æ—¶æœ‰æ•ˆ
+    //  * @return float èµ„æºå ç”¨å›¾çš„å€¼ï¼ŒèŒƒå›´ä¸º0.0~1.0ã€‚
     //  */
     // virtual float GetResourceUsageGraphValue() const override;
 };
