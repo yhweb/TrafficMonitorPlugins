@@ -188,6 +188,9 @@ void LStockItem::DrawHistoryGraph(CDC* pDC, const CRect& rect, bool dark_mode)
     std::vector<double> colSum(width, 0.0);
     std::vector<int> colCnt(width, 0);
 
+    // 日分隔竖线：记录每个交易日末点的边界列下标与当日末价，面积图画完后统一绘制
+    std::vector<std::pair<int, double>> daySeparators;
+
     // 把一段价格序列按实际点数比例铺到像素列区间 [cLo, cHi) 上
     auto spreadToColumns = [&colSum, &colCnt](const std::vector<double>& pts, int cLo, int cHi)
     {
@@ -242,15 +245,26 @@ void LStockItem::DrawHistoryGraph(CDC* pDC, const CRect& rect, bool dark_mode)
                 continue;
 
             spreadToColumns(day, cLo, cHi);
+
+            // 该天数据的末端边界列即分隔线位置（== 下一天的 cLo，相邻天共用同一取整边界）；
+            // 顶部取当日最后一根数据的收盘价
+            daySeparators.emplace_back(cHi, day.back());
         }
     }
     else
     {
         // slotsPerDay 未知（<=0）：退化为按实际点数铺满整个宽度（保留旧行为）
+        const double totalN = static_cast<double>(series.totalPoints());
         std::vector<double> flat;
         flat.reserve(series.totalPoints());
         for (const auto& d : series.days)
+        {
             flat.insert(flat.end(), d.begin(), d.end());
+            if (!d.empty())
+            {
+                daySeparators.emplace_back(static_cast<int>(std::lround(flat.size() / totalN * width)), d.back());
+            }
+        }
         if (flat.size() < 2)
             return;
         spreadToColumns(flat, 0, width);
@@ -285,6 +299,20 @@ void LStockItem::DrawHistoryGraph(CDC* pDC, const CRect& rect, bool dark_mode)
         return;
     const double range = maxPrice - minPrice;
 
+    // 价格 -> y 坐标（面积列与日分隔竖线共用同一套量程和钳制，保证高度一致）
+    auto priceToY = [&](double value) -> int
+    {
+        if (range <= 0.0)
+            return rect.top + height / 2;
+        double ratio = (value - minPrice) / range;
+        if (ratio < 0.0) ratio = 0.0;
+        if (ratio > 1.0) ratio = 1.0;
+        int y = bottom - static_cast<int>(std::lround(ratio * usable));
+        if (y < rect.top) y = rect.top;
+        if (y > bottom) y = bottom;
+        return y;
+    };
+
     // 逐列绘制底部对齐的竖线，形成面积填充效果
     COLORREF graphColor = dark_mode ? g_data.HistoryGraphColorDark() : g_data.HistoryGraphColorLight();
 
@@ -303,28 +331,52 @@ void LStockItem::DrawHistoryGraph(CDC* pDC, const CRect& rect, bool dark_mode)
         if (x > rect.right - 1)
             break;
 
-        const double value = colSum[c] / static_cast<double>(colCnt[c]);
-
-        int y;
-        if (range <= 0.0)
-        {
-            y = rect.top + height / 2;
-        }
-        else
-        {
-            double ratio = (value - minPrice) / range;
-            if (ratio < 0.0) ratio = 0.0;
-            if (ratio > 1.0) ratio = 1.0;
-            y = bottom - static_cast<int>(std::lround(ratio * usable));
-        }
-        if (y < rect.top) y = rect.top;
-        if (y > bottom) y = bottom;
+        const int y = priceToY(colSum[c] / static_cast<double>(colCnt[c]));
 
         pDC->MoveTo(x, bottom);
         pDC->LineTo(x, y);
     }
 
     pDC->SelectObject(pOldPen);
+
+    // 分隔线颜色：深色 / 浅色各取一个配置值
+    const COLORREF sepColor = dark_mode ? g_data.HistoryGraphSepLineColorDark() : g_data.HistoryGraphSepLineColorLight();
+    const bool showSepLine = g_data.HistoryGraphShowSepLine();
+
+    // 日分隔竖线：只在「已经走完的交易日」末列画，从底部画到当日末价高度，用来切分各交易日。
+    // daySeparators 的最后一个元素是最后一天——它还没走完，没有「当日末价」可言，
+    // 所以不参与本循环，改由下面的「当前价线」单独绘制。
+    if (showSepLine && daySeparators.size() > 1)
+    {
+        CPen sepPen(PS_SOLID, 1, sepColor);
+        CPen* pOldSepPen = pDC->SelectObject(&sepPen);
+        for (size_t si = 0; si + 1 < daySeparators.size(); ++si)
+        {
+            int x = rect.left + daySeparators[si].first;
+            if (x < rect.left)
+                x = rect.left;
+            if (x > rect.right - 1)
+                x = rect.right - 1;
+            pDC->MoveTo(x, bottom);
+            pDC->LineTo(x, priceToY(daySeparators[si].second));
+        }
+        pDC->SelectObject(pOldSepPen);
+    }
+
+    // 当前价线：最后一天数据的末端列，从底部画到最新价，用来标出当前价位置
+    if (showSepLine && !daySeparators.empty())
+    {
+        CPen curPen(PS_SOLID, 1, sepColor);
+        CPen* pOldCurPen = pDC->SelectObject(&curPen);
+        int x = rect.left + daySeparators.back().first;
+        if (x < rect.left)
+            x = rect.left;
+        if (x > rect.right - 1)
+            x = rect.right - 1;
+        pDC->MoveTo(x, bottom);
+        pDC->LineTo(x, priceToY(daySeparators.back().second));
+        pDC->SelectObject(pOldCurPen);
+    }
 
     // 可选：面积图外圈虚线框（与面积图同色）。PS_DOT 必须配 1px 笔宽 + 透明背景，
     // 否则虚线间隙会被背景色填成实线；用 MoveTo/LineTo 画四条边，不用 Rectangle 以免填充。

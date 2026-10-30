@@ -46,6 +46,9 @@ namespace
     static const auto KEY_CFG_GRAPH_COLOR_DARK = "/stock/history_graph_color_dark";
     static const auto KEY_CFG_GRAPH_COLOR_LIGHT = "/stock/history_graph_color_light";
     static const auto KEY_CFG_GRAPH_DASHED_BOX = "/stock/history_graph_dashed_box";
+static const auto KEY_CFG_GRAPH_SHOW_SEP_LINE = "/stock/history_graph_show_sep_line";
+static const auto KEY_CFG_GRAPH_SEP_COLOR_DARK = "/stock/history_graph_sep_color_dark";
+static const auto KEY_CFG_GRAPH_SEP_COLOR_LIGHT = "/stock/history_graph_sep_color_light";
     static const auto KEY_CFG_SCROLL_ENABLE = "/stock/is_scroll_enable";
     static const auto KEY_CFG_SCROLL_PAGE_SIZE = "/stock/scroll_page_size";
     static const auto KEY_CFG_SCROLL_INTERVAL = "/stock/scroll_interval";
@@ -739,6 +742,36 @@ bool LDataManager::HistoryGraphDashedBox() const
     return m_stockConfig.historyGraphDashedBox;
 }
 
+bool LDataManager::HistoryGraphShowSepLine() const
+{
+    return m_stockConfig.historyGraphShowSepLine;
+}
+
+void LDataManager::HistoryGraphShowSepLine(bool flag)
+{
+    m_stockConfig.historyGraphShowSepLine = flag;
+}
+
+COLORREF LDataManager::HistoryGraphSepLineColorDark() const
+{
+    return m_stockConfig.historyGraphSepLineColorDark;
+}
+
+void LDataManager::HistoryGraphSepLineColorDark(COLORREF color)
+{
+    m_stockConfig.historyGraphSepLineColorDark = color;
+}
+
+COLORREF LDataManager::HistoryGraphSepLineColorLight() const
+{
+    return m_stockConfig.historyGraphSepLineColorLight;
+}
+
+void LDataManager::HistoryGraphSepLineColorLight(COLORREF color)
+{
+    m_stockConfig.historyGraphSepLineColorLight = color;
+}
+
 void LDataManager::IsDrawHistoryGraph(bool flag)
 {
     m_stockConfig.isDrawHistoryGraph = flag;
@@ -901,6 +934,9 @@ void LDataManager::InitConfig()
     m_stockConfig.historyGraphColorDark = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_COLOR_DARK, (long)RGB(110, 110, 110));
     m_stockConfig.historyGraphColorLight = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_COLOR_LIGHT, (long)RGB(198, 198, 198));
     m_stockConfig.historyGraphDashedBox = pConfig->ReadBool(KEY_CFG_GRAPH_DASHED_BOX, false);
+m_stockConfig.historyGraphShowSepLine = pConfig->ReadBool(KEY_CFG_GRAPH_SHOW_SEP_LINE, true);
+m_stockConfig.historyGraphSepLineColorDark = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_SEP_COLOR_DARK, (long)RGB(80, 80, 80));
+m_stockConfig.historyGraphSepLineColorLight = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_SEP_COLOR_LIGHT, (long)RGB(150, 150, 150));
     m_stockConfig.isScrollEnable = pConfig->ReadBool(KEY_CFG_SCROLL_ENABLE, false);
     m_stockConfig.scrollPageSize = pConfig->Read(KEY_CFG_SCROLL_PAGE_SIZE, DEFAULT_SCROLL_PAGE_SIZE);
     m_stockConfig.scrollInterval = pConfig->Read(KEY_CFG_SCROLL_INTERVAL, DEFAULT_SCROLL_INTERVAL);
@@ -953,6 +989,9 @@ void LDataManager::ReLoadConfig()
     m_stockConfig.historyGraphColorDark = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_COLOR_DARK, (long)RGB(110, 110, 110));
     m_stockConfig.historyGraphColorLight = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_COLOR_LIGHT, (long)RGB(198, 198, 198));
     m_stockConfig.historyGraphDashedBox = pConfig->ReadBool(KEY_CFG_GRAPH_DASHED_BOX, false);
+m_stockConfig.historyGraphShowSepLine = pConfig->ReadBool(KEY_CFG_GRAPH_SHOW_SEP_LINE, true);
+m_stockConfig.historyGraphSepLineColorDark = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_SEP_COLOR_DARK, (long)RGB(80, 80, 80));
+m_stockConfig.historyGraphSepLineColorLight = (COLORREF)pConfig->ReadLong(KEY_CFG_GRAPH_SEP_COLOR_LIGHT, (long)RGB(150, 150, 150));
     m_stockConfig.isScrollEnable = pConfig->ReadBool(KEY_CFG_SCROLL_ENABLE, false);
     m_stockConfig.scrollPageSize = pConfig->Read(KEY_CFG_SCROLL_PAGE_SIZE, DEFAULT_SCROLL_PAGE_SIZE);
     m_stockConfig.scrollInterval = pConfig->Read(KEY_CFG_SCROLL_INTERVAL, DEFAULT_SCROLL_INTERVAL);
@@ -1000,6 +1039,9 @@ void LDataManager::SaveConfig()
     pConfig->Write(KEY_CFG_GRAPH_COLOR_DARK, (long)m_stockConfig.historyGraphColorDark);
     pConfig->Write(KEY_CFG_GRAPH_COLOR_LIGHT, (long)m_stockConfig.historyGraphColorLight);
     pConfig->Write(KEY_CFG_GRAPH_DASHED_BOX, m_stockConfig.historyGraphDashedBox);
+pConfig->Write(KEY_CFG_GRAPH_SHOW_SEP_LINE, m_stockConfig.historyGraphShowSepLine);
+pConfig->Write(KEY_CFG_GRAPH_SEP_COLOR_DARK, (long)m_stockConfig.historyGraphSepLineColorDark);
+pConfig->Write(KEY_CFG_GRAPH_SEP_COLOR_LIGHT, (long)m_stockConfig.historyGraphSepLineColorLight);
     pConfig->Write(KEY_CFG_SCROLL_ENABLE, m_stockConfig.isScrollEnable);
     pConfig->Write(KEY_CFG_SCROLL_PAGE_SIZE, m_stockConfig.scrollPageSize);
     pConfig->Write(KEY_CFG_SCROLL_INTERVAL, m_stockConfig.scrollInterval);

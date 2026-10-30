@@ -275,6 +275,20 @@ void LStockOptionView::InitUI()
     graphColorSizer->Add(new wxStaticText(rootPanel, wxID_ANY, "浅色走势图颜色:"), 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 15);
     graphColorSizer->Add(m_colourGraphLight, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 5);
     graphColorSizer->Add(m_isGraphDashedBoxCheck, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 20);
+
+    // 日分隔竖线：开关 + 深色/浅色颜色选择器
+    wxBoxSizer *sepLineSizer = new wxBoxSizer(wxHORIZONTAL);
+    m_isSepLineCheck = new wxCheckBox(rootPanel, wxID_ANY, "显示分隔线");
+    COLORREF sepDark = g_data.HistoryGraphSepLineColorDark();
+    COLORREF sepLight = g_data.HistoryGraphSepLineColorLight();
+    m_colourSepDark = new wxColourPickerCtrl(rootPanel, wxID_ANY, wxColour(GetRValue(sepDark), GetGValue(sepDark), GetBValue(sepDark)));
+    m_colourSepLight = new wxColourPickerCtrl(rootPanel, wxID_ANY, wxColour(GetRValue(sepLight), GetGValue(sepLight), GetBValue(sepLight)));
+    sepLineSizer->Add(m_isSepLineCheck, 0, wxALIGN_CENTER_VERTICAL);
+    sepLineSizer->Add(new wxStaticText(rootPanel, wxID_ANY, "深色分隔线颜色:"), 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 15);
+    sepLineSizer->Add(m_colourSepDark, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 5);
+    sepLineSizer->Add(new wxStaticText(rootPanel, wxID_ANY, "浅色分隔线颜色:"), 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 15);
+    sepLineSizer->Add(m_colourSepLight, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 5);
+    settingsBoxSizer->Add(sepLineSizer, 0, wxTOP, 6);
     settingsBoxSizer->Add(graphColorSizer, 0);
 
     settingsBoxSizer->AddSpacer(8);
@@ -353,6 +367,13 @@ void LStockOptionView::LoadOptions()
         m_colourGraphLight->SetColour(wxColour(GetRValue(cfgLight), GetGValue(cfgLight), GetBValue(cfgLight)));
     }
     m_isGraphDashedBoxCheck->SetValue(g_data.HistoryGraphDashedBox());
+    m_isSepLineCheck->SetValue(g_data.HistoryGraphShowSepLine());
+    {
+        COLORREF sd = g_data.HistoryGraphSepLineColorDark();
+        COLORREF sl = g_data.HistoryGraphSepLineColorLight();
+        m_colourSepDark->SetColour(wxColour(GetRValue(sd), GetGValue(sd), GetBValue(sd)));
+        m_colourSepLight->SetColour(wxColour(GetRValue(sl), GetGValue(sl), GetBValue(sl)));
+    }
     bool scrollEnable = g_data.IsScrollEnable();
     m_isScrollEnableCheck->SetValue(scrollEnable);
     m_scrollPageSizeSpin->SetValue(g_data.ScrollPageSize());
@@ -444,6 +465,18 @@ void LStockOptionView::BindAllEvents()
         g_data.HistoryGraphColorLight(RGB(c.Red(), c.Green(), c.Blue())); });
     m_isGraphDashedBoxCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
                                   { g_data.HistoryGraphDashedBox(event.IsChecked()); });
+    m_isSepLineCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
+                              { g_data.HistoryGraphShowSepLine(event.IsChecked()); });
+    m_colourSepDark->Bind(wxEVT_COLOURPICKER_CHANGED, [](wxColourPickerEvent &event)
+    {
+        wxColour c = event.GetColour();
+        g_data.HistoryGraphSepLineColorDark(RGB(c.Red(), c.Green(), c.Blue()));
+    });
+    m_colourSepLight->Bind(wxEVT_COLOURPICKER_CHANGED, [](wxColourPickerEvent &event)
+    {
+        wxColour c = event.GetColour();
+        g_data.HistoryGraphSepLineColorLight(RGB(c.Red(), c.Green(), c.Blue()));
+    });
     m_isScrollEnableCheck->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent &event)
                                 {
         bool en = event.IsChecked();

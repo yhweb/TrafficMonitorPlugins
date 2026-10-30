@@ -238,6 +238,14 @@ public:
     void HistoryGraphColorLight(COLORREF color);
     // 是否显示面积图虚线外框
     bool HistoryGraphDashedBox() const;
+    // 日分隔竖线（已结束交易日 + 当前价位置标记）是否显示
+    bool HistoryGraphShowSepLine() const;
+    void HistoryGraphShowSepLine(bool flag);
+    // 分隔线颜色：深色模式 / 浅色模式各一个
+    COLORREF HistoryGraphSepLineColorDark() const;
+    void HistoryGraphSepLineColorDark(COLORREF color);
+    COLORREF HistoryGraphSepLineColorLight() const;
+    void HistoryGraphSepLineColorLight(COLORREF color);
     void HistoryGraphDashedBox(bool flag);
     void HistoryDays(int days);
     bool IsDrawHistoryGraph() const;
@@ -340,6 +348,11 @@ private:
         COLORREF historyGraphColorLight;
         // 是否显示面积图虚线外框（默认 false）
         bool historyGraphDashedBox;
+    // 是否显示日分隔竖线（含当前价位置标记）
+    bool historyGraphShowSepLine;
+    // 分隔线颜色（深色 / 浅色）
+    COLORREF historyGraphSepLineColorDark;
+    COLORREF historyGraphSepLineColorLight;
         // 是否开启滚动显示
         bool isScrollEnable;
         // 滚动显示每页数量

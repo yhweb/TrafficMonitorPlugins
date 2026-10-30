@@ -78,6 +78,10 @@ private:
     wxColourPickerCtrl* m_colourGraphDark;
     wxColourPickerCtrl* m_colourGraphLight;
     wxCheckBox* m_isGraphDashedBoxCheck;
+    // 日分隔竖线开关与颜色（深色/浅色）
+    wxCheckBox* m_isSepLineCheck;
+    wxColourPickerCtrl* m_colourSepDark;
+    wxColourPickerCtrl* m_colourSepLight;
     // 滚动显示相关
     wxCheckBox* m_isScrollEnableCheck;
     wxSpinCtrl* m_scrollPageSizeSpin;
