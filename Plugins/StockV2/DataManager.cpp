@@ -4,6 +4,11 @@
 #include <wx/config.h>
 #include "TaskManager.h"
 #include <iomanip>
+#include <chrono>
+#include <fstream>
+#include <cstring>
+#include <mutex>
+#include <utility>
 #include <wx/webrequest.h>
 #include <wx/wx.h>
 #include <random>
@@ -1275,10 +1280,655 @@ void LDataManager::ResetRefreshThrottle()
     m_refreshAppliedMs = 0;
 }
 
+// ==================== quote window multi-period data ====================
+// Request: { type:<int>, code:"<raw code>", time:<ms> }
+//   type reuses the GY enum from stock_sf.html plus custom 100:
+//     0=timeline 100=5-day 2=5min 3=15min 6=dayK 7=weekK 8=monthK
+//   type 0 (timeline) NEVER comes here: it keeps the legacy {time_range,newest,points}
+//   shape (with prevclose) so the existing renderer keeps drawing the prev-close baseline.
+// Response: { code:"<code>", type:<int>, data:[...] }
+//   5-day minute points: { d:"2026-10-30", m:"09:30", p:2.7000, avg:2.7000, v:15637900 }
+//   K line bars        : { d:"2026-10-30 09:35:00", o:2.0800, h:2.1700, l:2.0400, c:2.1700, v:43692100 }
+// Prices/volumes are emitted as bare JSON numbers, never as strings.
+//
+// Measured on 2026-10-30 with sz002086 / M2701:
+//   Stock getKLineData: scale=1 (1200 pts ~ 5 trading days), 5, 15, 240 (day), 1680 (week),
+//     7200 (month) all work; scale=10080 answers "var t1=(null)" so month must use 7200.
+//   Futures cannot use getKLineData (symbol M2701 and nf_M2701 both answer var t5=(null)):
+//     minute : InnerFuturesNewService.getFewMinLine?symbol=M2701&type=5|15  item {d,o,h,l,c,v,p}
+//     daily  : InnerFuturesNewService.getDailyKLine?symbol=M2701            same item shape
+//     week/month: no upstream endpoint, aggregated locally from the daily bars.
+//   Futures getFourDaysLine: outer = 5 trading-day groups ascending, inner point =
+//     [time, price, avgPrice, minuteVolume, openInterest, prevClose, date]; date and
+//     prevClose only exist on the first point of each group (7 fields there, 5 elsewhere).
+
+struct WebMinutePoint
+{
+    std::string d;
+    std::string m;
+    double p;
+    double avg;
+    double v;
+};
+
+struct WebCandlePoint
+{
+    std::string d;
+    double o;
+    double h;
+    double l;
+    double c;
+    double v;
+};
+
+enum class WebRawShape
+{
+    NONE,
+    MINUTE_OBJ, // stock intraday [{m,v,p,avg_p}]
+    CANDLE_OBJ, // stock/futures K bars [{day|d, open|o, ...}]
+    DAY_GROUPS  // futures four-day [[[time,price,avg,...], ...], ...]
+};
+
+static std::string WebFmtPrice(double v)
+{
+    return wxString::Format(wxT("%.4f"), v).ToStdString();
+}
+
+static std::string WebFmtVolume(double v)
+{
+    return wxString::Format(wxT("%.0f"), v).ToStdString();
+}
+
+// Only digits and separators are expected here; still filter per byte so hand-built JSON
+// can never be broken by a stray quote/backslash/control char.
+static std::string WebSafeStr(const std::string &s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i)
+    {
+        const unsigned char ch = static_cast<unsigned char>(s[i]);
+        if (ch < 0x20 || ch == '"' || ch == '\\')
+        {
+            continue;
+        }
+        out.push_back(s[i]);
+    }
+    return out;
+}
+
+// The bundled yyjson has no yyjson_get_num (C3861) and every price arrives as a quoted
+// string, so numbers go through strtod. allowZero=false drops 0/negative values.
+static bool WebReadNumVal(yyjson_val *val, double &out, bool allowZero)
+{
+    if (val == nullptr || !yyjson_is_str(val))
+    {
+        return false;
+    }
+    const char *numText = yyjson_get_str(val);
+    if (numText == nullptr || *numText == 0)
+    {
+        return false;
+    }
+    char *endptr = nullptr;
+    const double v = std::strtod(numText, &endptr);
+    if (endptr == numText || !std::isfinite(v))
+    {
+        return false;
+    }
+    if (!allowZero && v <= 0.0)
+    {
+        return false;
+    }
+    out = v;
+    return true;
+}
+
+static bool WebReadNumObj(yyjson_val *obj, const char *key, double &out, bool allowZero)
+{
+    if (obj == nullptr)
+    {
+        return false;
+    }
+    return WebReadNumVal(yyjson_obj_get(obj, key), out, allowZero);
+}
+
+// Stock bars use open/high/low/close/volume, futures bars use o/h/l/c/v.
+static bool WebReadNumEither(yyjson_val *obj, const char *first, const char *second, double &out, bool allowZero)
+{
+    if (WebReadNumObj(obj, first, out, allowZero))
+    {
+        return true;
+    }
+    if (second != nullptr && WebReadNumObj(obj, second, out, allowZero))
+    {
+        return true;
+    }
+    return false;
+}
+
+static std::string WebReadStr(yyjson_val *obj, const char *key)
+{
+    if (obj == nullptr)
+    {
+        return std::string();
+    }
+    yyjson_val *val = yyjson_obj_get(obj, key);
+    if (val == nullptr || !yyjson_is_str(val))
+    {
+        return std::string();
+    }
+    const char *text = yyjson_get_str(val);
+    return text ? std::string(text) : std::string();
+}
+
+static WebRawShape WebDetectShape(yyjson_val *root)
+{
+    if (root == nullptr || !yyjson_is_arr(root))
+    {
+        return WebRawShape::NONE;
+    }
+    yyjson_val *first = yyjson_arr_get(root, 0);
+    if (first == nullptr)
+    {
+        return WebRawShape::NONE;
+    }
+    if (yyjson_is_arr(first))
+    {
+        return WebRawShape::DAY_GROUPS;
+    }
+    if (!yyjson_is_obj(first))
+    {
+        return WebRawShape::NONE;
+    }
+    return (yyjson_obj_get(first, "m") != nullptr) ? WebRawShape::MINUTE_OBJ : WebRawShape::CANDLE_OBJ;
+}
+
+// Futures four-day minute lines: keepDays=0 keeps every group, >0 keeps the newest ones.
+static void WebParseDayGroups(yyjson_val *root, int keepDays, std::vector<WebMinutePoint> &out)
+{
+    std::vector<std::vector<WebMinutePoint>> groups;
+    yyjson_arr_iter dayIter;
+    yyjson_arr_iter_init(root, &dayIter);
+    yyjson_val *day = nullptr;
+    while ((day = yyjson_arr_iter_next(&dayIter)) != nullptr)
+    {
+        if (!yyjson_is_arr(day))
+        {
+            continue;
+        }
+        std::vector<WebMinutePoint> points;
+        std::string curDate;
+        yyjson_arr_iter pointIter;
+        yyjson_arr_iter_init(day, &pointIter);
+        yyjson_val *point = nullptr;
+        while ((point = yyjson_arr_iter_next(&pointIter)) != nullptr)
+        {
+            if (!yyjson_is_arr(point))
+            {
+                continue;
+            }
+            if (yyjson_arr_size(point) >= 7)
+            {
+                const char *dateText = yyjson_get_str(yyjson_arr_get(point, 6));
+                if (dateText != nullptr)
+                {
+                    curDate = dateText;
+                }
+            }
+            WebMinutePoint minutePoint;
+            minutePoint.d = curDate;
+            const char *timeText = yyjson_get_str(yyjson_arr_get(point, 0));
+            if (timeText != nullptr)
+            {
+                const size_t timeLen = strlen(timeText);
+                minutePoint.m.assign(timeText, 0, timeLen < 5 ? timeLen : 5);
+            }
+            if (!WebReadNumVal(yyjson_arr_get(point, 1), minutePoint.p, false))
+            {
+                continue;
+            }
+            if (!WebReadNumVal(yyjson_arr_get(point, 2), minutePoint.avg, false))
+            {
+                minutePoint.avg = minutePoint.p;
+            }
+            if (!WebReadNumVal(yyjson_arr_get(point, 3), minutePoint.v, true))
+            {
+                minutePoint.v = 0.0;
+            }
+            points.push_back(minutePoint);
+        }
+        if (!points.empty())
+        {
+            groups.push_back(std::move(points));
+        }
+    }
+
+    size_t first = 0;
+    if (keepDays > 0 && groups.size() > static_cast<size_t>(keepDays))
+    {
+        first = groups.size() - static_cast<size_t>(keepDays);
+    }
+    for (size_t i = first; i < groups.size(); ++i)
+    {
+        out.insert(out.end(), groups[i].begin(), groups[i].end());
+    }
+}
+
+static void WebParseCandleObjects(yyjson_val *root, std::vector<WebCandlePoint> &out)
+{
+    yyjson_arr_iter iter;
+    yyjson_arr_iter_init(root, &iter);
+    yyjson_val *item = nullptr;
+    while ((item = yyjson_arr_iter_next(&iter)) != nullptr)
+    {
+        if (!yyjson_is_obj(item))
+        {
+            continue;
+        }
+        WebCandlePoint bar;
+        bar.d = WebReadStr(item, "day");
+        if (bar.d.empty())
+        {
+            bar.d = WebReadStr(item, "d");
+        }
+        if (bar.d.empty())
+        {
+            continue;
+        }
+        if (!WebReadNumEither(item, "open", "o", bar.o, false))
+        {
+            continue;
+        }
+        if (!WebReadNumEither(item, "high", "h", bar.h, false))
+        {
+            continue;
+        }
+        if (!WebReadNumEither(item, "low", "l", bar.l, false))
+        {
+            continue;
+        }
+        if (!WebReadNumEither(item, "close", "c", bar.c, false))
+        {
+            continue;
+        }
+        if (!WebReadNumEither(item, "volume", "v", bar.v, true))
+        {
+            bar.v = 0.0;
+        }
+        out.push_back(bar);
+    }
+}
+
+// Howard Hinnant days-from-civil, used to bucket bars into calendar weeks.
+static long WebCivilDayIndex(int y, int m, int d)
+{
+    y -= (m <= 2) ? 1 : 0;
+    const long era = (y >= 0 ? y : y - 399) / 400;
+    const long yoe = y - era * 400;
+    const long doy = (153L * (m + (m > 2 ? -3 : 9)) + 2L) / 5L + d - 1;
+    const long doe = yoe * 365L + yoe / 4L - yoe / 100L + doy;
+    return era * 146097L + doe - 719468L;
+}
+
+static bool WebParseYmd(const std::string &text, int &y, int &m, int &d)
+{
+    if (text.size() < 10 || text[4] != '-' || text[7] != '-')
+    {
+        return false;
+    }
+    y = std::atoi(text.c_str());
+    m = std::atoi(text.c_str() + 5);
+    d = std::atoi(text.c_str() + 8);
+    return y > 1990 && m >= 1 && m <= 12 && d >= 1 && d <= 31;
+}
+
+// Aggregate daily bars into weekly (mode=1) or monthly (mode=2) bars: open from the first
+// bar, close from the last, high/low as extremes, volume summed, label = last bar's date
+// (that is also how Sina labels its own week/month bars).
+static void WebAggregateCandles(const std::vector<WebCandlePoint> &src, int mode, std::vector<WebCandlePoint> &out)
+{
+    std::string lastKey;
+    for (size_t i = 0; i < src.size(); ++i)
+    {
+        const WebCandlePoint &bar = src[i];
+        int y = 0;
+        int m = 0;
+        int d = 0;
+        if (!WebParseYmd(bar.d, y, m, d))
+        {
+            continue;
+        }
+
+        std::string key;
+        if (mode == 1)
+        {
+            // 1970-01-01 was a Thursday, so +3 aligns the 7-day buckets to Monday.
+            key = std::to_string((WebCivilDayIndex(y, m, d) + 3) / 7);
+        }
+        else
+        {
+            key = std::to_string(static_cast<long>(y) * 12 + m);
+        }
+
+        if (!out.empty() && key == lastKey)
+        {
+            WebCandlePoint &cur = out.back();
+            if (bar.h > cur.h)
+            {
+                cur.h = bar.h;
+            }
+            if (bar.l < cur.l)
+            {
+                cur.l = bar.l;
+            }
+            cur.c = bar.c;
+            cur.v += bar.v;
+            cur.d = bar.d;
+        }
+        else
+        {
+            out.push_back(bar);
+            lastKey = key;
+        }
+    }
+}
+
+static int WebMaxBars(int typeVal)
+{
+    switch (typeVal)
+    {
+    case 2:
+        return 240;
+    case 3:
+        return 120;
+    case 6:
+    case 7:
+    case 8:
+        return 60;
+    default:
+        return 0;
+    }
+}
+
+static void WebTrimBars(std::vector<WebCandlePoint> &bars, int maxBars)
+{
+    if (maxBars > 0 && bars.size() > static_cast<size_t>(maxBars))
+    {
+        bars.erase(bars.begin(), bars.end() - maxBars);
+    }
+}
+
+static std::string WebBuildMinuteReply(const std::string &code, int typeVal, const std::vector<WebMinutePoint> &points)
+{
+    std::string out = "{\"code\":\"" + WebSafeStr(code) + "\",\"type\":" + std::to_string(typeVal) + ",\"data\":[";
+    for (size_t i = 0; i < points.size(); ++i)
+    {
+        if (i != 0)
+        {
+            out.push_back(',');
+        }
+        out += "{\"d\":\"" + WebSafeStr(points[i].d) + "\",\"m\":\"" + WebSafeStr(points[i].m) + "\",\"p\":" +
+               WebFmtPrice(points[i].p) + ",\"avg\":" + WebFmtPrice(points[i].avg) + ",\"v\":" + WebFmtVolume(points[i].v) + "}";
+    }
+    out += "]}";
+    return out;
+}
+
+static std::string WebBuildCandleReply(const std::string &code, int typeVal, const std::vector<WebCandlePoint> &bars)
+{
+    std::string out = "{\"code\":\"" + WebSafeStr(code) + "\",\"type\":" + std::to_string(typeVal) + ",\"data\":[";
+    for (size_t i = 0; i < bars.size(); ++i)
+    {
+        if (i != 0)
+        {
+            out.push_back(',');
+        }
+        out += "{\"d\":\"" + WebSafeStr(bars[i].d) + "\",\"o\":" + WebFmtPrice(bars[i].o) + ",\"h\":" + WebFmtPrice(bars[i].h) +
+               ",\"l\":" + WebFmtPrice(bars[i].l) + ",\"c\":" + WebFmtPrice(bars[i].c) + ",\"v\":" + WebFmtVolume(bars[i].v) + "}";
+    }
+    out += "]}";
+    return out;
+}
+
+// Turn a raw body (plain JSON or JSONP) into the reply string. Returns false on failure.
+static bool WebBuildPeriodReply(int typeVal, const std::string &code, const std::string &raw, std::string &out)
+{
+    // getMinlineData answers plain JSON, the K-line endpoints answer JSONP; ExtractJsonArray
+    // already strips either form down to the first '[' .. last ']'.
+    std::string json;
+    if (!ExtractJsonArray(raw, json))
+    {
+        return false;
+    }
+
+    yyjson_doc *doc = yyjson_read(json.c_str(), json.size(), 0);
+    if (doc == nullptr)
+    {
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    const WebRawShape shape = WebDetectShape(root);
+    bool ok = false;
+
+    if (shape == WebRawShape::DAY_GROUPS && typeVal == 100)
+    {
+        std::vector<WebMinutePoint> points;
+        WebParseDayGroups(root, 0, points);
+        if (!points.empty())
+        {
+            out = WebBuildMinuteReply(code, typeVal, points);
+            ok = true;
+        }
+    }
+    else if (shape == WebRawShape::CANDLE_OBJ)
+    {
+        std::vector<WebCandlePoint> bars;
+        WebParseCandleObjects(root, bars);
+        if (!bars.empty())
+        {
+            if (typeVal == 7 || typeVal == 8)
+            {
+                std::vector<WebCandlePoint> aggregated;
+                WebAggregateCandles(bars, typeVal == 7 ? 1 : 2, aggregated);
+                bars.swap(aggregated);
+            }
+            WebTrimBars(bars, WebMaxBars(typeVal));
+            if (!bars.empty())
+            {
+                out = WebBuildCandleReply(code, typeVal, bars);
+                ok = true;
+            }
+        }
+    }
+
+    yyjson_doc_free(doc);
+    return ok;
+}
+
+// Reuse the same reply for 4 seconds: the page polls every 5s and switching tabs fast
+// would otherwise fire one blocking HTTP request per click.
+static std::mutex s_mtxWebReplyCache;
+static std::map<std::string, std::pair<long long, std::string>> s_webReplyCache;
+
+static long long WebNowMs()
+{
+    return static_cast<long long>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+static bool WebReplyCacheGet(const std::string &key, std::string &payload)
+{
+    std::lock_guard<std::mutex> lock(s_mtxWebReplyCache);
+    auto it = s_webReplyCache.find(key);
+    if (it == s_webReplyCache.end())
+    {
+        return false;
+    }
+    if (WebNowMs() - it->second.first > 4000)
+    {
+        return false;
+    }
+    payload = it->second.second;
+    return true;
+}
+
+static void WebReplyCachePut(const std::string &key, const std::string &payload)
+{
+    std::lock_guard<std::mutex> lock(s_mtxWebReplyCache);
+    if (s_webReplyCache.size() > 256)
+    {
+        s_webReplyCache.clear();
+    }
+    s_webReplyCache[key] = std::make_pair(WebNowMs(), payload);
+}
+
+// Fetch + parse for one non-timeline period. Empty string means "reply nothing useful".
+static std::string WebHandleKlineRequest(int typeVal, const std::string &code)
+{
+    switch (typeVal)
+    {
+    case 2:
+    case 3:
+    case 6:
+    case 7:
+    case 8:
+    case 100:
+        break;
+    default:
+        LLOG_WARN_F("WebHandleKlineRequest: unsupported type %d", typeVal);
+        return std::string();
+    }
+
+    if (code.empty())
+    {
+        return std::string();
+    }
+
+    const std::string cacheKey = code + "#" + std::to_string(typeVal);
+    std::string cached;
+    if (WebReplyCacheGet(cacheKey, cached))
+    {
+        return cached;
+    }
+
+    auto stock = g_data.GetStockByCode(code);
+    if (!stock || stock->code.empty())
+    {
+        LLOG_WARN_F("WebHandleKlineRequest: stock not found %s", code.c_str());
+        return std::string();
+    }
+
+    const MarketType marketType = market(stock->code);
+    const bool isFutures = (marketType == MarketType::MarketType_NF || marketType == MarketType::MarketType_CFF);
+    if (!isFutures && !IsStockKLineMarket(marketType))
+    {
+        LLOG_WARN_F("WebHandleKlineRequest: unsupported market %s", code.c_str());
+        return std::string();
+    }
+
+    wxString url;
+    if (isFutures)
+    {
+        const wxString symbol = (marketType == MarketType::MarketType_NF)
+                                    ? UtilStringHlp::remove(stock->code, wxT("nf_"))
+                                    : UtilStringHlp::remove(stock->code, wxT("CFF_RE_"));
+        // The jsonp callback name has to sit on the path and the symbol must be prefix-free,
+        // otherwise the endpoint answers "var t5=(null)".
+        const wxString prefix = wxT("https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t5") + symbol +
+                                wxT("=/InnerFuturesNewService.");
+        switch (typeVal)
+        {
+        case 100:
+            url = prefix + wxT("getFourDaysLine?symbol=") + symbol;
+            break;
+        case 2:
+            url = prefix + wxT("getFewMinLine?symbol=") + symbol + wxT("&type=5");
+            break;
+        case 3:
+            url = prefix + wxT("getFewMinLine?symbol=") + symbol + wxT("&type=15");
+            break;
+        default:
+            // No week/month endpoint for futures: pull daily bars and aggregate locally.
+            url = prefix + wxT("getDailyKLine?symbol=") + symbol;
+            break;
+        }
+    }
+    else
+    {
+        const wxString klineBase =
+            wxT("https://quotes.sina.cn/cn/api/jsonp.php/var%20t1=/CN_MarketDataService.getKLineData?symbol=") + stock->code +
+            wxT("&ma=no");
+        switch (typeVal)
+        {
+        case 100:
+            url = klineBase + wxT("&scale=1&datalen=1200"); // 5 trading days of 1-minute bars
+            break;
+        case 2:
+            url = klineBase + wxT("&scale=5&datalen=240");
+            break;
+        case 3:
+            url = klineBase + wxT("&scale=15&datalen=120");
+            break;
+        case 6:
+            url = klineBase + wxT("&scale=240&datalen=60");
+            break;
+        case 7:
+            url = klineBase + wxT("&scale=1680&datalen=60"); // 240*7; also works via scale=1200
+            break;
+        case 8:
+            url = klineBase + wxT("&scale=7200&datalen=30"); // 240*30; scale=10080 answers null
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (url.empty())
+    {
+        return std::string();
+    }
+
+    CString strHeaders = _T("Referer: https://finance.sina.com.cn");
+    std::string raw;
+    if (!UtilNetHlp::GetURL(url.ToStdWstring(), raw, false, WEB_USERAGENT, strHeaders, strHeaders.GetLength()) || raw.empty())
+    {
+        LLOG_WARN_F("WebHandleKlineRequest GetURL failed: %s", url.ToUTF8().data());
+        return std::string();
+    }
+
+    std::string payload;
+    if (!WebBuildPeriodReply(typeVal, code, raw, payload) || payload.empty())
+    {
+        LLOG_WARN_F("WebHandleKlineRequest build failed: type=%d code=%s len=%d", typeVal, code.c_str(),
+                    static_cast<int>(raw.size()));
+        return std::string();
+    }
+
+    WebReplyCachePut(cacheKey, payload);
+    return payload;
+}
+
+// Send one bridge reply. Must never throw into the socket worker thread.
+static void WebBridgeReply(const std::string &callback_id, const std::string &payload)
+{
+    try
+    {
+        LStockServerSocket &server = LStockServerSocket::GetInstance();
+        if (server.GetBridge() != nullptr)
+        {
+            server.GetBridge()->BridgeSendDataWithCallback(callback_id, payload);
+        }
+    }
+    catch (...)
+    {
+        wxLogDebug("WebBridgeReply: exception");
+    }
+}
+
 void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, const std::string &data)
 {
     wxLogDebug("OnRefreshStockTimelineData: %s", data.c_str());
-
     // 注意：本函数所有提前返回的分支都必须回调一次空响应，
     // 否则 JS 侧的 loading 状态永远不会结束（弹窗一直显示「加载中」）
     auto replyEmpty = [&callback_id]()
@@ -1302,18 +1952,32 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
         return;
     }
 
-    LStockPeriodType type = IntToStockPeriodType(UtilJsonHlp::GetInt(root, "type", -1));
-    switch (type)
+    const int rawType = UtilJsonHlp::GetInt(root, "type", -1);
+    if (rawType != 0)
     {
-    case LStockPeriodType::TIMELINE:
-        break;
-    default:
-        wxLogDebug("OnRefreshStockTimelineData: not support %d", type);
+        // 100=5-day, 2/3=5m/15m, 6/7/8=day/week/month K use the new flat data array.
+        // type 0 keeps the legacy {time_range,newest,points} reply (prevclose lives there).
+        const std::string periodCode = UtilJsonHlp::GetString(root, "code").ToStdString();
         yyjson_doc_free(doc);
-        replyEmpty();
+        std::string payload;
+        try
+        {
+            payload = WebHandleKlineRequest(rawType, periodCode);
+        }
+        catch (...)
+        {
+            LLOG_ERROR("OnRefreshStockTimelineData: kline exception swallowed");
+            payload.clear();
+        }
+        if (payload.empty())
+        {
+            payload = "{}";
+        }
+        WebBridgeReply(callback_id, payload);
         return;
     }
 
+    LStockPeriodType type = IntToStockPeriodType(rawType);
     std::string code = UtilJsonHlp::GetString(root, "code").ToStdString();
 
     auto stock = g_data.GetStockByCode(code);

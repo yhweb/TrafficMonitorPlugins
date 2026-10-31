@@ -354,3 +354,6 @@ MigrationBackup/
 
 # CLion / JetBrains IDE
 .idea/
+
+# 本地临时脚本/提取产物
+.tmp_utf8/
