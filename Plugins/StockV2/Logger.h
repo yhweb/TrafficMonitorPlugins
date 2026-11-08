@@ -124,7 +124,12 @@ public:
 
 };
 
+#ifdef NDEBUG
+// Release：调试日志彻底消失（连参数求值都不做）
+#define LLOG_DEBUG(fmt, ...) ((void)0)
+#else
 #define LLOG_DEBUG(fmt, ...) LLogger::Instance().WriteLog(LogLevel::LEVEL_DEBUG, false, __FILE__, __FUNCTIONW__, __LINE__, fmt, __VA_ARGS__)
+#endif
 #define LLOG_INFO(fmt, ...) LLogger::Instance().WriteLog(LogLevel::LEVEL_INFO, false, __FILE__, __FUNCTIONW__, __LINE__, fmt, __VA_ARGS__)
 #define LLOG_WARN(fmt, ...) LLogger::Instance().WriteLog(LogLevel::LEVEL_WARN, false, __FILE__, __FUNCTIONW__, __LINE__, fmt, __VA_ARGS__)
 #define LLOG_ERROR(fmt, ...) LLogger::Instance().WriteLog(LogLevel::LEVEL_ERROR, false, __FILE__, __FUNCTIONW__, __LINE__, fmt, __VA_ARGS__)

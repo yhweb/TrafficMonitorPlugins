@@ -2,6 +2,7 @@
 #include <PluginInterface.h>
 #include <list>
 #include <vector>
+#include <memory>
 class LStockItem : public IPluginItem
 {
 public:
@@ -18,16 +19,59 @@ private:
 
     // 获取走势图历史价格序列（时间从旧到新，末位=最新）
     // TODO: 待任务A接入真实分时数据（目前返回本地生成的 5 天模拟序列）
-    StockHistorySeries GetHistoryPrices();
+    const StockHistorySeries &GetHistoryPrices();
 
     // 历史价格序列（时间从旧到新，末位=最新），由 GetHistoryPrices 生成并缓存
     StockHistorySeries m_historySeries;
     // 分时缓存键：滚动显示时 index 会变，天数也可被用户改，须与缓存一起记录
     wxString m_historyCacheCode;
     int m_historyCacheDays{0};
+    // 数据版本号：与 g_data.HistoryRev() 比对，版本未变则复用缓存，避免每帧深拷贝
+    unsigned long long m_historyCacheRev{0};
     // 降采样后的逐像素列取样值（大小 = 绘制区域像素宽），每次重绘按当前数据重算
     // 仅作复用缓冲避免反复分配：不做缓存键，接入真实数据后不会读到旧列
     std::vector<double> m_historyColumns;
+
+    // DrawHistoryGraph 的逐列缓冲与日分隔线缓冲：成员化以跨帧复用，避免每帧重新分配
+    std::vector<double> m_colSum;                                  // DrawHistoryGraph 列累积缓冲（跨帧复用）
+    std::vector<int> m_colCnt;                                     // DrawHistoryGraph 列计数缓冲（跨帧复用）
+    std::vector<std::pair<int, double>> m_daySeparators;           // DrawHistoryGraph 日分隔线缓冲（跨帧复用）
+
+    // 条目绘制参数（一次算好，供签名比对与离屏渲染共用）
+    struct ItemDrawParams
+    {
+        bool showName{ false };
+        CString nameText;
+        CString valueText;
+        CString costLabel;
+        CString costDir;
+        COLORREF colorDefault{ 0 };
+        COLORREF valueColor{ 0 };
+        COLORREF dirColor{ 0 };
+        int nameColWidth{ 0 };
+        int valueWidth{ 0 };
+        int labelWidth{ 0 };
+        int dirWidth{ 0 };
+    };
+
+    // 条目级 DIB 缓存：内容与几何未变时直接贴回上帧位图，跳过走势图与文字重绘。
+    // 用 shared_ptr 承载，避免 LStockItem 被拷贝/赋值（StockV2.cpp 用 std::fill 初始化）时句柄双删。
+    struct ItemDibCache
+    {
+        HDC dc{ nullptr };
+        HBITMAP bitmap{ nullptr };
+        HGDIOBJ oldBitmap{ nullptr };
+        int w{ 0 };
+        int h{ 0 };
+        unsigned long long sig{ 0 };
+        unsigned long long tick{ 0 };
+        bool valid{ false };
+        ~ItemDibCache();
+    };
+    std::shared_ptr<ItemDibCache> m_dib;
+
+    // 按参数把条目内容（走势图 + 文字）绘制到给定 DC 的 rect 区域
+    void RenderItem(CDC *pDC, const CRect &rect, bool dark_mode, const ItemDrawParams &params);
 
 public:
     /**

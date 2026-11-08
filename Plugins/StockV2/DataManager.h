@@ -253,6 +253,9 @@ public:
     void HistoryDays(int days);
     bool IsDrawHistoryGraph() const;
     void IsDrawHistoryGraph(bool flag);
+    // 条目级 DIB 缓存开关（性能选项，关闭后完全走原逐帧重绘路径）
+    bool IsItemDibCache() const;
+    void IsItemDibCache(bool flag);
     bool IsScrollEnable() const;
     void IsScrollEnable(bool flag);
     int ScrollPageSize() const;
@@ -301,6 +304,11 @@ public:
     // 序列已按 HistoryDays() 截成「最近 N 个交易日」，绘制侧直接用即可，不需要再按日切分。
     // 还没有拉取成功（首次请求未回来 / 网络失败 / 该市场不支持）时返回空 vector，调用侧按无数据处理。
     StockHistorySeries GetHistoryPrices(const wxString &code) const;
+    // 历史数据版本号：缓存内容每次变更即 +1。绘制侧缓存住它，版本没变就跳过重取，避免每帧深拷贝。
+    unsigned long long HistoryRev() const;
+    // 把某只股票的 5 日分时序列拷进调用方提供的对象（值为已有缓存）。
+    // 锁内只做一次拷贝，返回 false 时 out 保持原样（找不到缓存 / 该市场不支持）。
+    bool GetHistoryPricesInto(const wxString &code, StockHistorySeries &out) const;
     // 是否已有可用的分时缓存（不拷贝序列），给绘制侧判断要不要等数据
     bool HasHistoryPrices(const wxString &code) const;
     // 立即刷新全部自选股的分时缓存（同步发网络请求，勿在 UI 线程直接调用）。
@@ -342,6 +350,8 @@ private:
         int textTransparency;
         // 是否绘制历史走势图背景（横向滚动图）
         bool isDrawHistoryGraph;
+        // 条目级 DIB 缓存（性能选项，默认开启；排查渲染问题时可在 ini 里关掉）
+        bool isItemDibCache;
         // 走势图显示天数，1~5
         int historyDays;
         // 走势图渲染模式（0=铺满 / 1=固定时间轴）
@@ -406,6 +416,7 @@ private:
     // 不能占着自选列表的锁，否则 UI 的增删改与遍历会被长时间阻塞。两把锁互不嵌套，无死锁风险。
     mutable std::mutex m_mtxHistory;
     std::map<wxString, StockHistorySeries> m_historyPrices;
+    mutable unsigned long long m_historyRev{0};   // 历史数据版本号：m_historyPrices 内容每变更一次即 +1
     //wxVector<wxSharedPtr<LStockData>> m_cacheStocks;
     //StockDataMap m_cacheStockMap;
 };

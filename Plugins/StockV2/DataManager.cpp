@@ -46,6 +46,7 @@ namespace
     static const auto KEY_CFG_DISPLAY_ALIAS = "/stock/is_display_alias";
     static const auto KEY_CFG_TEXT_TRANSPARENCY = "/stock/text_transparency";
     static const auto KEY_CFG_DRAW_HISTORY_GRAPH = "/stock/is_draw_history_graph";
+static const auto KEY_CFG_ITEM_DIB_CACHE = "/stock/item_dib_cache";
     static const auto KEY_CFG_HISTORY_DAYS = "/stock/history_days";
     static const auto KEY_CFG_HISTORY_GRAPH_MODE = "/stock/history_graph_mode";
     static const auto KEY_CFG_HISTORY_GRAPH_STYLE = "/stock/history_graph_style";
@@ -812,6 +813,16 @@ bool LDataManager::IsDrawHistoryGraph() const
     return m_stockConfig.isDrawHistoryGraph;
 }
 
+void LDataManager::IsItemDibCache(bool flag)
+{
+    m_stockConfig.isItemDibCache = flag;
+}
+
+bool LDataManager::IsItemDibCache() const
+{
+    return m_stockConfig.isItemDibCache;
+}
+
 void LDataManager::IsScrollEnable(bool flag)
 {
     m_stockConfig.isScrollEnable = flag;
@@ -946,6 +957,7 @@ void LDataManager::InitConfig()
     m_stockConfig.textTransparency = (int)pConfig->ReadLong(KEY_CFG_TEXT_TRANSPARENCY, 0);
     TextTransparency(m_stockConfig.textTransparency);
     m_stockConfig.isDrawHistoryGraph = pConfig->ReadBool(KEY_CFG_DRAW_HISTORY_GRAPH, false);
+m_stockConfig.isItemDibCache = pConfig->ReadBool(KEY_CFG_ITEM_DIB_CACHE, true);
     m_stockConfig.historyDays = (int)pConfig->ReadLong(KEY_CFG_HISTORY_DAYS, 5);
     if (m_stockConfig.historyDays < 1)
     {
@@ -1003,6 +1015,7 @@ void LDataManager::ReLoadConfig()
     m_stockConfig.textTransparency = (int)pConfig->ReadLong(KEY_CFG_TEXT_TRANSPARENCY, 0);
     TextTransparency(m_stockConfig.textTransparency);
     m_stockConfig.isDrawHistoryGraph = pConfig->ReadBool(KEY_CFG_DRAW_HISTORY_GRAPH, false);
+m_stockConfig.isItemDibCache = pConfig->ReadBool(KEY_CFG_ITEM_DIB_CACHE, true);
     m_stockConfig.historyDays = (int)pConfig->ReadLong(KEY_CFG_HISTORY_DAYS, 5);
     if (m_stockConfig.historyDays < 1)
     {
@@ -1062,6 +1075,7 @@ void LDataManager::SaveConfig()
     pConfig->Write(KEY_CFG_DISPLAY_ALIAS, m_stockConfig.isDisplayAlias);
     pConfig->Write(KEY_CFG_TEXT_TRANSPARENCY, m_stockConfig.textTransparency);
     pConfig->Write(KEY_CFG_DRAW_HISTORY_GRAPH, m_stockConfig.isDrawHistoryGraph);
+    pConfig->Write(KEY_CFG_ITEM_DIB_CACHE, m_stockConfig.isItemDibCache);
     pConfig->Write(KEY_CFG_HISTORY_DAYS, m_stockConfig.historyDays);
     pConfig->Write(KEY_CFG_HISTORY_GRAPH_MODE, m_stockConfig.historyGraphMode);
     pConfig->Write(KEY_CFG_HISTORY_GRAPH_STYLE, m_stockConfig.historyGraphStyle);
@@ -2381,13 +2395,28 @@ void LDataManager::OnRefreshStockTimelineData(const std::string &callback_id, co
 
 StockHistorySeries LDataManager::GetHistoryPrices(const wxString &code) const
 {
+    // 注意：GetHistoryPricesInto 内部已加锁，这里不能再加锁
+    StockHistorySeries out;
+    GetHistoryPricesInto(code, out);
+    return out;
+}
+
+unsigned long long LDataManager::HistoryRev() const
+{
+    std::lock_guard<std::mutex> lock(m_mtxHistory);
+    return m_historyRev;
+}
+
+bool LDataManager::GetHistoryPricesInto(const wxString &code, StockHistorySeries &out) const
+{
     std::lock_guard<std::mutex> lock(m_mtxHistory);
     auto it = m_historyPrices.find(code);
     if (it == m_historyPrices.end())
     {
-        return StockHistorySeries{};
+        return false;
     }
-    return it->second;
+    out = it->second;
+    return true;
 }
 
 bool LDataManager::HasHistoryPrices(const wxString &code) const
@@ -2401,6 +2430,7 @@ void LDataManager::ClearHistoryPrices()
 {
     std::lock_guard<std::mutex> lock(m_mtxHistory);
     m_historyPrices.clear();
+    ++m_historyRev;
 }
 
 // 单只股票/期货的分时拉取。任何失败都返回 false，由调用侧保留上一份缓存
@@ -2504,6 +2534,7 @@ void LDataManager::RefreshHistoryPrices()
             }
             std::lock_guard<std::mutex> lock(m_mtxHistory);
             m_historyPrices[code] = std::move(prices);
+            ++m_historyRev;
         }
 
         // 剔除已从自选删除的股票，避免缓存随增删无限增长
@@ -2513,6 +2544,7 @@ void LDataManager::RefreshHistoryPrices()
             if (codes.Index(it->first) == wxNOT_FOUND)
             {
                 it = m_historyPrices.erase(it);
+                ++m_historyRev;
             }
             else
             {
