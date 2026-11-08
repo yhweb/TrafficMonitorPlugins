@@ -166,9 +166,14 @@ namespace LStockViewer
         return webView;
     }
 
-    BOOL LStockView::Setup(wxPoint pt, const int stock_index)
+    BOOL LStockView::Setup(wxPoint pt, const wxString& stock_code)
     {
-        m_stock = g_data.GetStockByIndex(stock_index);
+        m_stock = g_data.GetStockByCode(stock_code);
+        if (!m_stock)
+        {
+            LLOG_ERROR("[StockView] stock not found: %s", stock_code);
+            return FALSE;
+        }
         m_is_cleaned = false;
 
         int wxWindowStyle = wxNO_BORDER | wxTRANSPARENT_WINDOW;

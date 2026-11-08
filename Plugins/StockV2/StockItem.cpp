@@ -1035,6 +1035,7 @@ void LStockItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode)
     if (data == nullptr) {
         return;
     }
+    m_displayedStockCode = data->GetCode();
 
     CDC* pDC = CDC::FromHandle((HDC)hDC);
     CRect rect(CPoint(x, y), CSize(w, h));
@@ -1198,20 +1199,33 @@ const wchar_t *LStockItem::GetItemValueSampleText() const
     return L"--";
 }
 
+wxString LStockItem::GetDisplayedStockCode() const
+{
+    if (!m_displayedStockCode.empty())
+    {
+        return m_displayedStockCode;
+    }
+
+    auto data = g_data.GetStockByIndex(index);
+    return data ? data->GetCode() : wxString();
+}
+
 int LStockItem::OnMouseEvent(MouseEventType type, int x, int y, void *hWnd, int flag)
 {
     CWnd *pWnd = CWnd::FromHandle((HWND)hWnd);
     LLOG_DEBUG("OnMouseEvent: %d", type);
     CPoint ptScreen = CPoint(x, y);
+    wxString stockCode = GetDisplayedStockCode();
     switch (type)
     {
     case IPluginItem::MT_RCLICKED:
-        LStockPlugin::Instance()->ShowStockViewMenu(hWnd, ptScreen, g_data.GetStockByIndex(index));
+        LStockPlugin::Instance()->ShowStockViewMenu(
+            hWnd, ptScreen, g_data.GetStockByCode(stockCode));
         return 1;
 
     case IPluginItem::MT_LCLICKED:
     {
-        LStockPlugin::Instance()->ShowStockView(index);
+        LStockPlugin::Instance()->ShowStockView(stockCode);
     }
     default:
         break;

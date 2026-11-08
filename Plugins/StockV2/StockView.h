@@ -20,7 +20,7 @@ namespace LStockViewer
         LStockView(wxWindow* parent);
         ~LStockView() override;
         // 初始化接口
-        BOOL Setup(wxPoint pt, const int stock_index);
+        BOOL Setup(wxPoint pt, const wxString& stock_code);
         // 资源清理
         void Clean();
 

@@ -21,7 +21,7 @@ public:
     ~LStockPlugin();
 
 public:
-    void ShowStockView(const int stock_index);
+    void ShowStockView(const wxString& stock_code);
     void ShowStockViewMenu(void* hWnd, CPoint ptScreen, wxSharedPtr<STOCK::LStockData> stock);
     void ShowStockWxFrame();
     void LoadDisplayItems();

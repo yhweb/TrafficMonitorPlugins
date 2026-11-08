@@ -446,14 +446,14 @@ namespace
 
     void StockWxApp::OnShowStockView(wxThreadEvent &event)
     {
-        const int stock_index = event.GetInt();
-        if (stock_index < 0) {
+        const wxString stockCode = event.GetString();
+        if (stockCode.empty()) {
             return;
         }
         // 显示走势图（LStockView 现为无边框置顶的独立顶层窗口，无需额外父窗口）
         wxPoint pt = wxGetMousePosition();
         LStockViewer::LStockView *stock_view = new LStockViewer::LStockView(nullptr);
-        stock_view->Setup(pt, stock_index);
+        stock_view->Setup(pt, stockCode);
     }
 
     // we can't have WinMain() in a DLL and want to start the app ourselves
@@ -759,14 +759,14 @@ void LStockPlugin::ShowStockWxFrame()
     wxQueueEvent(wxApp::GetInstance(), event);
 }
 
-void LStockPlugin::ShowStockView(const int stock_index)
+void LStockPlugin::ShowStockView(const wxString& stock_code)
 {
-    if (stock_index < 0) {
+    if (stock_code.empty()) {
         return;
     }
 
     wxThreadEvent *event = new wxThreadEvent(wxEVT_THREAD, CMD_SHOW_STOCK_VIEW);
-    event->SetInt(stock_index);
+    event->SetString(stock_code);
     wxQueueEvent(wxApp::GetInstance(), event);
 }
 
