@@ -1774,10 +1774,7 @@ namespace STOCK
             variant = data->GetDisplayMarket();
             break;
         case Col_NameText:
-            variant = data->GetName();
-            break;
-        case Col_AliasText:
-            variant = data->GetAlias();
+            variant = data->GetDisplayName();
             break;
         case Col_CodeText:
             variant = data->GetCode();
@@ -1802,9 +1799,6 @@ namespace STOCK
             attr.SetColour(wxColour(*wxLIGHT_GREY));
             break;
         case Col_NameText:
-            attr.SetColour(wxColour(*wxBLACK));
-            return true;
-        case Col_AliasText:
             attr.SetColour(wxColour(*wxBLACK));
             return true;
         case Col_CodeText:
@@ -1846,7 +1840,7 @@ namespace STOCK
         auto data = m_row_data[row];
         switch (col)
         {
-        case Col_AliasText:
+        case Col_NameText:
         {
             wxString alias = variant.GetString();
             alias.Trim();

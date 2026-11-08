@@ -680,7 +680,6 @@ namespace STOCK
         {
             Col_MarketText,
             Col_NameText,
-            Col_AliasText,
             Col_DecimalsText,
             Col_CodeText,
             Col_CostPriceText,

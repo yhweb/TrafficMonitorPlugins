@@ -5,6 +5,7 @@
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/textctrl.h>
+#include <wx/textdlg.h>
 #include <wx/stattext.h>
 #include <wx/sizer.h>
 #include <wx/msgdlg.h>
@@ -107,15 +108,6 @@ void LStockOptionView::InitUI()
         wxALIGN_NOT,
         col_flag);
     colName->GetRenderer()->SetAlignment(alignment);
-
-    wxDataViewColumn *const colAlias = m_stockListCtrl->AppendTextColumn(
-        "自定义名称",
-        STOCK::LStockListVM::Col_AliasText,
-        wxDATAVIEW_CELL_EDITABLE,
-        FromDIP(140),
-        wxALIGN_NOT,
-        col_flag);
-    colAlias->GetRenderer()->SetAlignment(alignment);
 
     wxDataViewSpinRenderer* decimalsRenderer = new wxDataViewSpinRenderer(
         MIN_DECIMAL_PLACES,
@@ -742,10 +734,41 @@ void LStockOptionView::OnStockListItemActivated(wxDataViewEvent &event)
         return;
     }
     unsigned int column = event.GetColumn();
+    if (column == STOCK::LStockListVM::Col_NameText)
+    {
+        auto data = m_solVM->GetRowData(item);
+        if (!data)
+        {
+            return;
+        }
+        wxString currentName = data->GetDisplayName();
+        wxTextEntryDialog dialog(this,
+                                 "请输入新的股票显示名称，留空恢复原始名称：",
+                                 "修改显示名称",
+                                 currentName);
+        if (dialog.ShowModal() == wxID_OK)
+        {
+            wxString displayName = dialog.GetValue();
+            displayName.Trim();
+            displayName.Trim(false);
+            if (displayName == data->GetName())
+            {
+                displayName.clear();
+            }
+            data->SetAlias(displayName);
+            if (!displayName.empty() && !g_data.IsDisplayAlias())
+            {
+                g_data.IsDisplayAlias(true);
+            }
+            m_isDisplayAliasCheck->SetValue(g_data.IsDisplayAlias());
+            m_solVM->RowChanged(m_solVM->GetRow(item));
+            m_stockListCtrl->Select(item);
+        }
+        return;
+    }
     if (column != STOCK::LStockListVM::Col_DecimalsText &&
         column != STOCK::LStockListVM::Col_CostPriceText &&
-        column != STOCK::LStockListVM::Col_DirectionText &&
-        column != STOCK::LStockListVM::Col_AliasText)
+        column != STOCK::LStockListVM::Col_DirectionText)
     {
         return;
     }
