@@ -108,6 +108,15 @@ void LStockOptionView::InitUI()
         col_flag);
     colName->GetRenderer()->SetAlignment(alignment);
 
+    wxDataViewColumn *const colAlias = m_stockListCtrl->AppendTextColumn(
+        "自定义名称",
+        STOCK::LStockListVM::Col_AliasText,
+        wxDATAVIEW_CELL_EDITABLE,
+        FromDIP(140),
+        wxALIGN_NOT,
+        col_flag);
+    colAlias->GetRenderer()->SetAlignment(alignment);
+
     wxDataViewSpinRenderer* decimalsRenderer = new wxDataViewSpinRenderer(
         MIN_DECIMAL_PLACES,
         MAX_DECIMAL_PLACES,
@@ -735,7 +744,8 @@ void LStockOptionView::OnStockListItemActivated(wxDataViewEvent &event)
     unsigned int column = event.GetColumn();
     if (column != STOCK::LStockListVM::Col_DecimalsText &&
         column != STOCK::LStockListVM::Col_CostPriceText &&
-        column != STOCK::LStockListVM::Col_DirectionText)
+        column != STOCK::LStockListVM::Col_DirectionText &&
+        column != STOCK::LStockListVM::Col_AliasText)
     {
         return;
     }
@@ -757,6 +767,7 @@ void LStockOptionView::OnStockListItemActivated(wxDataViewEvent &event)
 
 void LStockOptionView::OnStockListItemValueChanged(wxDataViewEvent &event)
 {
+    m_isDisplayAliasCheck->SetValue(g_data.IsDisplayAlias());
     UpdateCostDisplayEnable();
     event.Skip();
 }

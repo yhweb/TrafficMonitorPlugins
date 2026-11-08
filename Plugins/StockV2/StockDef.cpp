@@ -1376,6 +1376,15 @@ namespace STOCK
             }
         }
 
+        alias = wxEmptyString;
+        if (cfg.size() > 7)
+        {
+            alias = cfg[7];
+            alias.Replace(CFG_REPLACE_STR, ",");
+            alias.Trim();
+            alias.Trim(false);
+        }
+
         isShort = false;
         if (cfg.size() > 6)
         {
@@ -1395,6 +1404,8 @@ namespace STOCK
         copy_type.Replace(",", CFG_REPLACE_STR, true);
         wxString copy_url = wxString(url);
         copy_url.Replace(",", CFG_REPLACE_STR, true);
+        wxString copy_alias = wxString(alias);
+        copy_alias.Replace(",", CFG_REPLACE_STR, true);
         wxString copy_decimals = wxString::Format("%d", decimals);
         wxArrayString cfg;
         cfg.push_back(copy_code);
@@ -1404,6 +1415,7 @@ namespace STOCK
         cfg.push_back(copy_decimals);
         cfg.push_back(UtilStringHlp::toFixed(costPrice, 6));
         cfg.push_back(isShort ? "1" : "0");
+        cfg.push_back(copy_alias);
         return UtilStringHlp::vectorJoinString(cfg, ",");
     }
 
@@ -1764,6 +1776,9 @@ namespace STOCK
         case Col_NameText:
             variant = data->GetName();
             break;
+        case Col_AliasText:
+            variant = data->GetAlias();
+            break;
         case Col_CodeText:
             variant = data->GetCode();
             break;
@@ -1787,6 +1802,9 @@ namespace STOCK
             attr.SetColour(wxColour(*wxLIGHT_GREY));
             break;
         case Col_NameText:
+            attr.SetColour(wxColour(*wxBLACK));
+            return true;
+        case Col_AliasText:
             attr.SetColour(wxColour(*wxBLACK));
             return true;
         case Col_CodeText:
@@ -1828,6 +1846,18 @@ namespace STOCK
         auto data = m_row_data[row];
         switch (col)
         {
+        case Col_AliasText:
+        {
+            wxString alias = variant.GetString();
+            alias.Trim();
+            alias.Trim(false);
+            data->SetAlias(alias);
+            if (!alias.empty() && !g_data.IsDisplayAlias())
+            {
+                g_data.IsDisplayAlias(true);
+            }
+            return true;
+        }
         case Col_DecimalsText:
         {
             long val = variant.GetLong();

@@ -199,6 +199,7 @@ namespace STOCK
     public:
         wxString type;
         wxString name;
+        wxString alias;
         wxString code;
         wxString url;
         unsigned int decimals = 2; // 小数点位数
@@ -285,6 +286,23 @@ namespace STOCK
         {
             std::lock_guard<std::recursive_mutex> lock(m_mtx);
             return name;
+        }
+        wxString GetAlias() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            return alias;
+        }
+        wxString GetDisplayName() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            return alias.empty() ? name : alias;
+        }
+        void SetAlias(const wxString &displayAlias)
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mtx);
+            alias = displayAlias;
+            alias.Trim();
+            alias.Trim(false);
         }
         wxString GetCode() const
         {
@@ -662,6 +680,7 @@ namespace STOCK
         {
             Col_MarketText,
             Col_NameText,
+            Col_AliasText,
             Col_DecimalsText,
             Col_CodeText,
             Col_CostPriceText,

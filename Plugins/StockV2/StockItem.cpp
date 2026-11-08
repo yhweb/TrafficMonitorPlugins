@@ -14,9 +14,9 @@ namespace
         auto stocks = g_data.AllStocks();
         for (const auto &stock : stocks)
         {
-            if (stock && !stock->GetName().empty())
+            if (stock)
             {
-                wxString displayName = g_data.IsDisplayAlias() ? stock->GetCode() : stock->GetName();
+                wxString displayName = (g_data.IsDisplayAlias() && !stock->GetAlias().empty()) ? stock->GetAlias() : stock->GetName();
                 CString text = (displayName + ": ").wc_str();
                 int w = pDC->GetTextExtent(text).cx;
                 if (w > maxWidth)
@@ -34,7 +34,7 @@ const wchar_t *LStockItem::GetItemName() const
         // 用线程本地缓冲返回副本：工作线程每 10 秒会并发重写 data->name，
         // 直接返回 data->name 的内部指针会因并发重写而悬空
         static thread_local wxString s_name;
-        s_name = data->GetName();
+        s_name = (g_data.IsDisplayAlias() && !data->GetAlias().empty()) ? data->GetAlias() : data->GetName();
         return s_name.wc_str();
     }
     return UtilResHlp.StringRes(IDS_LOADING);
@@ -449,7 +449,7 @@ void LStockItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode)
     CString nameText;
     if (g_data.IsDisplayName())
     {
-        wxString displayName = g_data.IsDisplayAlias() ? data->GetCode() : data->GetName();
+        wxString displayName = (g_data.IsDisplayAlias() && !data->GetAlias().empty()) ? data->GetAlias() : data->GetName();
         nameText = (displayName + ": ").wc_str();
     }
     CString valueText = GetDisplayContent(data, false);
