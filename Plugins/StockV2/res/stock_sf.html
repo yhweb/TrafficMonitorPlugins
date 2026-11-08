@@ -49,6 +49,8 @@ kv2Render=(pl)=>{let AR=pl&&Array.isArray(pl.data)?pl.data:[],N=AR.length,K=N>0&
 window.__KV2=window.__KV2||{};window.__KV2.re=kv2Render;window.__KV2.lastPl=pl;window.__KV2.lastK=K?1:0;
 if(!N){opt={backgroundColor:'transparent',animation:!1,title:{text:'\u6682\u65e0\u6570\u636e',left:'center',top:'46%',textStyle:{color:TX,fontSize:13,fontWeight:'normal'}}}}
 else if(K){CAT=AR.map(x=>dz(x.d));
+// MA3/MA5：切片前用全量收盘价预计算，首 p-1 根为 null
+let CLOSE_ALL=AR.map(x=>Number(x.c)||0),MA3A=[],MA5A=[],maN=(arr,p)=>{let out=[],s=0;for(let i=0;i<arr.length;i++){s+=arr[i];if(i>=p)s-=arr[i-p];out.push(i>=p-1?s/p:null)}return out};MA3A=maN(CLOSE_ALL,3);MA5A=maN(CLOSE_ALL,5);
 // 缩放/平移窗口：ZS.n=可视根数，ZS.s0=窗口左端索引（0 起），ZS.nmax=总根数
 let ZS=window.__KV2Z||(window.__KV2Z={t:null,n:0,s0:0}),ZT=(pl&&pl.type!=null)?pl.type:-1;
 if(ZS.t!==ZT){ZS.t=ZT;ZS.n=N;ZS.s0=0}
@@ -56,11 +58,13 @@ if(!(ZS.n>0)||ZS.n>N)ZS.n=N;
 ZS.nmax=N;
 if(!(ZS.s0>=0))ZS.s0=0;
 let ZMAX=N-ZS.n;if(ZS.s0>ZMAX)ZS.s0=ZMAX;
-if(ZS.n<N){AR=AR.slice(ZS.s0,ZS.s0+ZS.n);CAT=CAT.slice(ZS.s0,ZS.s0+ZS.n);N=AR.length}
+if(ZS.n<N){let zs=ZS.s0;AR=AR.slice(zs,zs+ZS.n);CAT=CAT.slice(zs,zs+ZS.n);MA3A=MA3A.slice(zs,zs+ZS.n);MA5A=MA5A.slice(zs,zs+ZS.n);N=AR.length}
 // 本 bundle 的 echarts 只编译进了 line 与 bar 两种图表（无 candlestick ChartView），
 // 所以 K 线用堆叠 bar 拼：透明基座 + 涨跌色实体 + 1px 影线。
 let OH=[],YMIN=0,YMAX=0,firstK=1;
 for(let i=0;i<N;i++){let x=AR[i],o=Number(x.o)||0,c=Number(x.c)||0,l=Number(x.l)||0,h=Number(x.h)||0;if(!(l>0))l=Math.min(o,c);if(!(h>0))h=Math.max(o,c);if(l>h){let t=l;l=h;h=t}OH.push([o,c,l,h]);if(firstK){YMIN=l;YMAX=h;firstK=0}else{if(l<YMIN)YMIN=l;if(h>YMAX)YMAX=h}}
+for(let i=0;i<N;i++){let m3=MA3A[i],m5=MA5A[i];if(m3!=null){if(m3<YMIN)YMIN=m3;if(m3>YMAX)YMAX=m3}if(m5!=null){if(m5<YMIN)YMIN=m5;if(m5>YMAX)YMAX=m5}}
+// MA 可能越出 K 线高低点，已并入 YMIN/YMAX 后再算 padding
 let PADK=(YMAX-YMIN)*0.04;if(!(PADK>0))PADK=Math.abs(YMAX||1)*0.01||1;
 let VOL=AR.map(x=>({value:Number(x.v)||0,itemStyle:{color:(Number(x.c)>=Number(x.o))?'rgba(246,78,86,.55)':'rgba(84,234,146,.55)'}})),stp=Math.max(1,Math.ceil(N/6));
 let TR='rgba(0,0,0,0)',BW=(N>120?'82%':(N>40?'62%':'46%'));
@@ -73,11 +77,13 @@ if(c>=o)WU.push(sg);else WD.push(sg)}
 let MK=(arr,col)=>({silent:!0,symbol:'',symbolSize:1,label:{show:!1},animation:!1,lineStyle:{color:col,width:1,type:'solid'},data:arr});
 let KB=(nm,dat,z,ml)=>({name:nm,type:'bar',xAxisIndex:0,yAxisIndex:0,stack:'kb',data:dat,barWidth:BW,barMinHeight:1,barCategoryGap:'22%',silent:!0,animation:!1,emphasis:{disabled:!0},z:z,markLine:ml});
 opt={backgroundColor:'transparent',animation:!1,grid:GRID,axisPointer:{link:[{xAxisIndex:'all'}]},
-tooltip:{trigger:'axis',axisPointer:AP,...TT,formatter:(ps)=>{let i=ps&&ps.length?ps[0].dataIndex:-1,x=AR[i]||{};return '<div style="line-height:17px">'+CAT[i]+'<br/>开 '+f2(x.o)+'　高 '+f2(x.h)+'<br/>低 '+f2(x.l)+'　收 '+f2(x.c)+'<br/>量 '+K3(x.v)+'</div>'}},
+tooltip:{trigger:'axis',axisPointer:AP,...TT,formatter:(ps)=>{let i=ps&&ps.length?ps[0].dataIndex:-1,x=AR[i]||{};return '<div style="line-height:17px">'+CAT[i]+'<br/>开 '+f2(x.o)+'　高 '+f2(x.h)+'<br/>低 '+f2(x.l)+'　收 '+f2(x.c)+'<br/>量 '+K3(x.v)+'<br/><span style="color:#3b9eff">MA3 '+(MA3A[i]!=null?f2(MA3A[i]):'--')+'</span>　<span style="color:#ffd54a">MA5 '+(MA5A[i]!=null?f2(MA5A[i]):'--')+'</span></div>'}},
 xAxis:[{type:'category',gridIndex:0,data:CAT,boundaryGap:!0,axisLine:{show:!1},axisTick:{show:!1},splitLine:{show:!1},axisLabel:{show:!1}},
 {type:'category',gridIndex:1,data:CAT,boundaryGap:!0,axisLine:{lineStyle:{color:AXL}},axisTick:{show:!1},splitLine:{show:!1},axisLabel:{color:TX,fontSize:10,margin:8,interval:(i)=>i%stp===0||i===N-1}}],
 yAxis:[{scale:!0,gridIndex:0,position:'right',min:YMIN-PADK,max:YMAX+PADK,axisLine:{show:!1},axisTick:{show:!1},splitLine:{lineStyle:{color:GR}},axisLabel:{color:TX,fontSize:10,margin:6,formatter:(v)=>f2(v)}},YA],
 series:[KB('kb0',B0,2,MK(WD,DN)),KB('kb1',B1,3,MK(WU,UP)),
+{name:'MA3',type:'line',xAxisIndex:0,yAxisIndex:0,data:MA3A,showSymbol:!1,symbolSize:1,connectNulls:!1,lineStyle:{width:1,color:'#3b9eff'},itemStyle:{color:'#3b9eff'},silent:!0,animation:!1,z:5},
+{name:'MA5',type:'line',xAxisIndex:0,yAxisIndex:0,data:MA5A,showSymbol:!1,symbolSize:1,connectNulls:!1,lineStyle:{width:1,color:'#ffd54a'},itemStyle:{color:'#ffd54a'},silent:!0,animation:!1,z:6},
 {name:'量',type:'bar',xAxisIndex:1,yAxisIndex:1,data:VOL,barMaxWidth:12,animation:!1}]}}else{let PL=AR.map(x=>Number(x.p)||0),AV=AR.map(x=>Number(x.avg)||0),VO=AR.map((x,i)=>({value:Number(x.v)||0,itemStyle:{color:(i>0&&PL[i]<PL[i-1])?'rgba(84,234,146,.5)':'rgba(246,78,86,.5)'}})),lab=new Set([0,N-1]);
 CAT=AR.map(x=>String(x.m==null?'':x.m));
 for(let i=1;i<N;i++){if(String(AR[i].d||'')!==String(AR[i-1].d||''))sep.push(i)}
