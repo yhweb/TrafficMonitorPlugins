@@ -3,6 +3,7 @@
 #include "pch.h"
 #include <wx/clrpicker.h>
 #include <wx/spinctrl.h>
+#include <wx/slider.h>
 #include <wx/srchctrl.h>
 #include <wx/dataview.h>
 #include "StockDef.h"
@@ -74,6 +75,8 @@ private:
     wxCheckBox* m_isDisplayCostProfitPercentCheck;
     wxCheckBox* m_isDisplayAliasCheck;
     wxCheckBox* m_isDrawHistoryGraphCheck;
+    wxSlider* m_textTransparencySlider;
+    wxStaticText* m_textTransparencyValue;
     // 面积图颜色（深色/浅色各一套）与虚线外框
     wxColourPickerCtrl* m_colourGraphDark;
     wxColourPickerCtrl* m_colourGraphLight;

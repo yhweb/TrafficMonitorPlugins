@@ -17,6 +17,7 @@
 #include <wx/txtstrm.h>
 #include <wx/wfstream.h>
 #include <wx/clrpicker.h>
+#include <wx/slider.h>
 #include "StockSearchView.h"
 #include <wx/wrapsizer.h>
 #include "StockV2.h"
@@ -263,6 +264,16 @@ void LStockOptionView::InitUI()
     settingsBoxSizer->AddSpacer(8);
 
     // 面积图颜色（深色/浅色模式各一个颜色选择器）+ 虚线框开关
+    wxBoxSizer *textTransparencySizer = new wxBoxSizer(wxHORIZONTAL);
+    m_textTransparencySlider = new wxSlider(rootPanel, wxID_ANY, 0, 0, 100, wxDefaultPosition, FromDIP(wxSize(220, -1)));
+    m_textTransparencyValue = new wxStaticText(rootPanel, wxID_ANY, "0%");
+    textTransparencySizer->Add(new wxStaticText(rootPanel, wxID_ANY, "文字透明度:"), 0, wxALIGN_CENTER_VERTICAL);
+    textTransparencySizer->Add(m_textTransparencySlider, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 8);
+    textTransparencySizer->Add(m_textTransparencyValue, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 8);
+    settingsBoxSizer->Add(textTransparencySizer, 0);
+
+    settingsBoxSizer->AddSpacer(8);
+
     wxBoxSizer *graphColorSizer = new wxBoxSizer(wxHORIZONTAL);
     {
         COLORREF cfgDark = g_data.HistoryGraphColorDark();
@@ -361,6 +372,8 @@ void LStockOptionView::LoadOptions()
     m_isDisplayCostProfitPercentCheck->SetValue(g_data.IsDisplayCostProfitPercent());
     m_isDisplayAliasCheck->SetValue(g_data.IsDisplayAlias());
     m_isDrawHistoryGraphCheck->SetValue(g_data.IsDrawHistoryGraph());
+    m_textTransparencySlider->SetValue(g_data.TextTransparency());
+    m_textTransparencyValue->SetLabel(wxString::Format("%d%%", g_data.TextTransparency()));
     {
         COLORREF cfgDark = g_data.HistoryGraphColorDark();
         COLORREF cfgLight = g_data.HistoryGraphColorLight();
@@ -456,6 +469,12 @@ void LStockOptionView::BindAllEvents()
                                 { g_data.IsDisplayAlias(event.IsChecked()); });
     m_isDrawHistoryGraphCheck->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &event)
                                     { g_data.IsDrawHistoryGraph(event.IsChecked()); });
+    m_textTransparencySlider->Bind(wxEVT_SLIDER, [this](wxCommandEvent &event)
+                                   {
+        int value = event.GetInt();
+        g_data.TextTransparency(value);
+        m_textTransparencyValue->SetLabel(wxString::Format("%d%%", value));
+        event.Skip(); });
     m_colourGraphDark->Bind(wxEVT_COLOURPICKER_CHANGED, [](wxColourPickerEvent &event)
                             {
         wxColour c = event.GetColour();

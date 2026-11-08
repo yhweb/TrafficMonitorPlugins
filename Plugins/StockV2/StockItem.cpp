@@ -4,9 +4,99 @@
 #include <wx/dcgraph.h>
 #include <cmath>
 #include <climits>
+#include <gdiplus.h>
+
+#pragma comment(lib, "gdiplus.lib")
 
 namespace
 {
+    class GdiplusInitializer
+    {
+    public:
+        GdiplusInitializer()
+        {
+            Gdiplus::GdiplusStartupInput input;
+            m_status = Gdiplus::GdiplusStartup(&m_token, &input, nullptr);
+        }
+
+        ~GdiplusInitializer()
+        {
+            if (m_status == Gdiplus::Ok)
+            {
+                Gdiplus::GdiplusShutdown(m_token);
+            }
+        }
+
+        bool IsReady() const
+        {
+            return m_status == Gdiplus::Ok;
+        }
+
+    private:
+        ULONG_PTR m_token = 0;
+        Gdiplus::Status m_status = Gdiplus::GenericError;
+    };
+
+    GdiplusInitializer &GetGdiplusInitializer()
+    {
+        static GdiplusInitializer initializer;
+        return initializer;
+    }
+
+    void DrawTextWithTransparency(CDC* pDC, const CString& text, const CRect& rect,
+                                  COLORREF color, UINT format)
+    {
+        const int transparency = g_data.TextTransparency();
+        if (transparency >= 100)
+        {
+            return;
+        }
+        if (transparency <= 0)
+        {
+            pDC->SetTextColor(color);
+            CRect drawRect(rect);
+            pDC->DrawText(text, drawRect, format);
+            return;
+        }
+        if (!GetGdiplusInitializer().IsReady())
+        {
+            pDC->SetTextColor(color);
+            CRect drawRect(rect);
+            pDC->DrawText(text, drawRect, format);
+            return;
+        }
+
+        Gdiplus::Graphics graphics(pDC->GetSafeHdc());
+        graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+
+        LOGFONT logFont{};
+        CFont* font = pDC->GetCurrentFont();
+        if (font == nullptr || font->GetLogFont(&logFont) == 0)
+        {
+            pDC->SetTextColor(color);
+            CRect drawRect(rect);
+            pDC->DrawText(text, drawRect, format);
+            return;
+        }
+
+        const BYTE alpha = static_cast<BYTE>((100 - transparency) * 255 / 100);
+        Gdiplus::Font gdiFont(pDC->GetSafeHdc(), &logFont);
+        Gdiplus::SolidBrush brush(Gdiplus::Color(alpha, GetRValue(color), GetGValue(color), GetBValue(color)));
+
+        Gdiplus::StringFormat stringFormat;
+        stringFormat.SetAlignment((format & DT_RIGHT) ? Gdiplus::StringAlignmentFar : Gdiplus::StringAlignmentNear);
+        stringFormat.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        stringFormat.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
+        stringFormat.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap |
+                                    Gdiplus::StringFormatFlagsNoClip);
+
+        Gdiplus::RectF layoutRect(static_cast<Gdiplus::REAL>(rect.left),
+                                  static_cast<Gdiplus::REAL>(rect.top),
+                                  static_cast<Gdiplus::REAL>(rect.Width()),
+                                  static_cast<Gdiplus::REAL>(rect.Height()));
+        graphics.DrawString(text.GetString(), text.GetLength(), &gdiFont, layoutRect, &stringFormat, &brush);
+    }
+
     // 计算所有股票中最长的「名称: 」显示宽度，用于名称列右对齐（使各条目价格起点对齐）
     int GetMaxStockNameWidth(CDC *pDC)
     {
@@ -470,65 +560,52 @@ void LStockItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode)
     // 1. 名称（右对齐到「最长名称」列）
     if (g_data.IsDisplayName())
     {
-        pDC->SetTextColor(color_default);
         CRect rc{ rect };
         rc.left = cursor;
         rc.right = cursor + nameColWidth;
-        pDC->DrawText(nameText, rc, flags | DT_RIGHT);
+        DrawTextWithTransparency(pDC, nameText, rc, color_default, flags | DT_RIGHT);
         cursor += nameColWidth;
     }
 
     // 2. 数值（价格 + 涨跌幅）
+    COLORREF valueColor = color_default;
     if (g_data.IsDisplayColor())
     {
         bool isUp = data->GetChangeFluctuation().find('+') != wxString::npos;
-        if (isUp)
-            pDC->SetTextColor(color_red);
-        else
-            pDC->SetTextColor(color_green);
-    }
-    else
-    {
-        pDC->SetTextColor(color_default);
+        valueColor = isUp ? color_red : color_green;
     }
     CRect rcValue{ rect };
     rcValue.left = cursor;
     rcValue.right = cursor + valueWidth;
-    pDC->DrawText(valueText, rcValue, flags);
+    DrawTextWithTransparency(pDC, valueText, rcValue, valueColor, flags);
     cursor += valueWidth;
 
     // 3. 成本价标签（中性色）
     if (!costLabel.IsEmpty())
     {
-        pDC->SetTextColor(color_default);
         CRect rc{ rect };
         rc.left = cursor;
         rc.right = cursor + labelWidth;
-        pDC->DrawText(costLabel, rc, flags);
+        DrawTextWithTransparency(pDC, costLabel, rc, color_default, flags);
         cursor += labelWidth;
     }
 
     // 4. 差额/涨跌幅：盈利红、亏损绿、持平用默认色（不变）
     if (!costDir.IsEmpty())
     {
+        COLORREF dirColor = color_default;
         if (g_data.IsDisplayColor())
         {
             int dir = data->GetCostProfitDirection();
             if (dir > 0)
-                pDC->SetTextColor(color_red);
+                dirColor = color_red;
             else if (dir < 0)
-                pDC->SetTextColor(color_green);
-            else
-                pDC->SetTextColor(color_default);
-        }
-        else
-        {
-            pDC->SetTextColor(color_default);
+                dirColor = color_green;
         }
         CRect rc{ rect };
         rc.left = cursor;
         rc.right = cursor + dirWidth;
-        pDC->DrawText(costDir, rc, flags);
+        DrawTextWithTransparency(pDC, costDir, rc, dirColor, flags);
     }
 }
 

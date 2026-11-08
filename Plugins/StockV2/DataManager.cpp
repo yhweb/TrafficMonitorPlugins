@@ -44,6 +44,7 @@ namespace
     static const auto KEY_CFG_DISPLAY_COST_PROFIT_PRICE = "/stock/is_display_cost_profit_price";
     static const auto KEY_CFG_DISPLAY_COST_PROFIT_PERCENT = "/stock/is_display_cost_profit_percent";
     static const auto KEY_CFG_DISPLAY_ALIAS = "/stock/is_display_alias";
+    static const auto KEY_CFG_TEXT_TRANSPARENCY = "/stock/text_transparency";
     static const auto KEY_CFG_DRAW_HISTORY_GRAPH = "/stock/is_draw_history_graph";
     static const auto KEY_CFG_HISTORY_DAYS = "/stock/history_days";
     static const auto KEY_CFG_HISTORY_GRAPH_MODE = "/stock/history_graph_mode";
@@ -648,6 +649,24 @@ bool LDataManager::IsDisplayAlias() const
     return m_stockConfig.isDisplayAlias;
 }
 
+void LDataManager::TextTransparency(int value)
+{
+    if (value < 0)
+    {
+        value = 0;
+    }
+    if (value > 100)
+    {
+        value = 100;
+    }
+    m_stockConfig.textTransparency = value;
+}
+
+int LDataManager::TextTransparency() const
+{
+    return m_stockConfig.textTransparency;
+}
+
 void LDataManager::HistoryDays(int days)
 {
     if (days < 1)
@@ -924,6 +943,8 @@ void LDataManager::InitConfig()
     m_stockConfig.isDisplayCostProfitPrice = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, true);
     m_stockConfig.isDisplayCostProfitPercent = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, true);
     m_stockConfig.isDisplayAlias = pConfig->ReadBool(KEY_CFG_DISPLAY_ALIAS, false);
+    m_stockConfig.textTransparency = (int)pConfig->ReadLong(KEY_CFG_TEXT_TRANSPARENCY, 0);
+    TextTransparency(m_stockConfig.textTransparency);
     m_stockConfig.isDrawHistoryGraph = pConfig->ReadBool(KEY_CFG_DRAW_HISTORY_GRAPH, false);
     m_stockConfig.historyDays = (int)pConfig->ReadLong(KEY_CFG_HISTORY_DAYS, 5);
     if (m_stockConfig.historyDays < 1)
@@ -979,6 +1000,8 @@ void LDataManager::ReLoadConfig()
     m_stockConfig.isDisplayCostProfitPrice = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, true);
     m_stockConfig.isDisplayCostProfitPercent = pConfig->ReadBool(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, true);
     m_stockConfig.isDisplayAlias = pConfig->ReadBool(KEY_CFG_DISPLAY_ALIAS, false);
+    m_stockConfig.textTransparency = (int)pConfig->ReadLong(KEY_CFG_TEXT_TRANSPARENCY, 0);
+    TextTransparency(m_stockConfig.textTransparency);
     m_stockConfig.isDrawHistoryGraph = pConfig->ReadBool(KEY_CFG_DRAW_HISTORY_GRAPH, false);
     m_stockConfig.historyDays = (int)pConfig->ReadLong(KEY_CFG_HISTORY_DAYS, 5);
     if (m_stockConfig.historyDays < 1)
@@ -1037,6 +1060,7 @@ void LDataManager::SaveConfig()
     pConfig->Write(KEY_CFG_DISPLAY_COST_PROFIT_PRICE, m_stockConfig.isDisplayCostProfitPrice);
     pConfig->Write(KEY_CFG_DISPLAY_COST_PROFIT_PERCENT, m_stockConfig.isDisplayCostProfitPercent);
     pConfig->Write(KEY_CFG_DISPLAY_ALIAS, m_stockConfig.isDisplayAlias);
+    pConfig->Write(KEY_CFG_TEXT_TRANSPARENCY, m_stockConfig.textTransparency);
     pConfig->Write(KEY_CFG_DRAW_HISTORY_GRAPH, m_stockConfig.isDrawHistoryGraph);
     pConfig->Write(KEY_CFG_HISTORY_DAYS, m_stockConfig.historyDays);
     pConfig->Write(KEY_CFG_HISTORY_GRAPH_MODE, m_stockConfig.historyGraphMode);

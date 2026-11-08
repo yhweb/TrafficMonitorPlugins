@@ -223,6 +223,9 @@ public:
     void IsDisplayCostProfitPercent(bool flag);
     bool IsDisplayAlias() const;
     void IsDisplayAlias(bool flag);
+    // 任务栏股票文字透明度：0=不透明，100=完全透明。
+    int TextTransparency() const;
+    void TextTransparency(int value);
     // 走势图显示天数（1~5）
     int HistoryDays() const;
     // 走势图渲染模式：0=铺满（数据铺满整个宽度，视觉饱满），1=固定时间轴（按真实时间留白，末尾贴右）
@@ -335,6 +338,8 @@ private:
         bool isDisplayCostProfitPercent;
         // 是否显示别名（以股票代码代替名称）
         bool isDisplayAlias;
+        // 任务栏文字透明度：0=不透明，100=完全透明。
+        int textTransparency;
         // 是否绘制历史走势图背景（横向滚动图）
         bool isDrawHistoryGraph;
         // 走势图显示天数，1~5
