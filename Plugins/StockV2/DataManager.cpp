@@ -520,6 +520,10 @@ LDataManager::LDataManager()
     m_moduleParentPath = moduleDllPath.GetPath();
     m_moduleName = moduleDllPath.GetName();
     m_isDisplayRightAlign = false;
+    m_stockConfig.hasLabelTextColor = false;
+    m_stockConfig.labelTextColor = RGB(255, 255, 255);
+    m_stockConfig.hasValueTextColor = false;
+    m_stockConfig.valueTextColor = RGB(255, 255, 255);
 }
 
 LDataManager::~LDataManager()
@@ -598,6 +602,46 @@ void LDataManager::IsDisplayRightAlign(bool flag)
 bool LDataManager::IsDisplayRightAlign() const
 {
     return m_isDisplayRightAlign;
+}
+
+void LDataManager::HasLabelTextColor(bool flag)
+{
+    m_stockConfig.hasLabelTextColor = flag;
+}
+
+bool LDataManager::HasLabelTextColor() const
+{
+    return m_stockConfig.hasLabelTextColor;
+}
+
+void LDataManager::LabelTextColor(COLORREF color)
+{
+    m_stockConfig.labelTextColor = color;
+}
+
+COLORREF LDataManager::LabelTextColor() const
+{
+    return m_stockConfig.labelTextColor;
+}
+
+void LDataManager::HasValueTextColor(bool flag)
+{
+    m_stockConfig.hasValueTextColor = flag;
+}
+
+bool LDataManager::HasValueTextColor() const
+{
+    return m_stockConfig.hasValueTextColor;
+}
+
+void LDataManager::ValueTextColor(COLORREF color)
+{
+    m_stockConfig.valueTextColor = color;
+}
+
+COLORREF LDataManager::ValueTextColor() const
+{
+    return m_stockConfig.valueTextColor;
 }
 
 void LDataManager::IsPriorityDisplayChanged(bool flag)

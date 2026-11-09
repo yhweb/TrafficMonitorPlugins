@@ -213,6 +213,14 @@ public:
     void IsDisplayColor(bool flag);
     bool IsDisplayRightAlign() const;
     void IsDisplayRightAlign(bool flag);
+    bool HasLabelTextColor() const;
+    void HasLabelTextColor(bool flag);
+    COLORREF LabelTextColor() const;
+    void LabelTextColor(COLORREF color);
+    bool HasValueTextColor() const;
+    void HasValueTextColor(bool flag);
+    COLORREF ValueTextColor() const;
+    void ValueTextColor(COLORREF color);
     bool IsPriorityDisplayChanged() const;
     void IsPriorityDisplayChanged(bool flag);
     bool IsDisplayCost() const;
@@ -336,6 +344,12 @@ private:
         bool isDisplayName;
         // 是否开启颜色显示
         bool isDisplayColor;
+        // Host-provided label text color state.
+        bool hasLabelTextColor;
+        COLORREF labelTextColor;
+        // Host-provided value text color state.
+        bool hasValueTextColor;
+        COLORREF valueTextColor;
         // 是否优先显示变动
         bool isPriorityDisplayChanged;
         // 是否显示成本价

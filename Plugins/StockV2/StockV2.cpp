@@ -713,6 +713,14 @@ void LStockPlugin::OnExtenedInfo(ExtendedInfoIndex index, const wchar_t *data)
         // 获取TrafficMonitor任务栏窗口中“数值右对齐”设置
         g_data.IsDisplayRightAlign(_wtoi(data) != 0);
         break;
+    case ITMPlugin::EI_LABEL_TEXT_COLOR:
+        g_data.LabelTextColor(static_cast<COLORREF>(wcstoul(data, nullptr, 10)));
+        g_data.HasLabelTextColor(true);
+        break;
+    case ITMPlugin::EI_VALUE_TEXT_COLOR:
+        g_data.ValueTextColor(static_cast<COLORREF>(wcstoul(data, nullptr, 10)));
+        g_data.HasValueTextColor(true);
+        break;
     default:
         break;
     }

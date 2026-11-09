@@ -1015,7 +1015,7 @@ void LStockItem::RenderItem(CDC *pDC, const CRect &rect, bool dark_mode, const I
         CRect rc{ rect };
         rc.left = cursor;
         rc.right = cursor + params.labelWidth;
-        DrawTextWithTransparency(pDC, params.costLabel, rc, params.colorDefault, flags);
+        DrawTextWithTransparency(pDC, params.costLabel, rc, params.valueColor, flags);
         cursor += params.labelWidth;
     }
 
@@ -1042,18 +1042,15 @@ void LStockItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode)
 
     // ---- 1. 先算好本帧绘制参数（签名比对与渲染共用）----
     ItemDrawParams params;
-    if (dark_mode)
-    {
-        params.colorDefault = RGB(255, 255, 255);
-        params.valueColor = params.colorDefault;
-        params.dirColor = params.colorDefault;
-    }
-    else
-    {
-        params.colorDefault = RGB(0, 0, 0);
-        params.valueColor = params.colorDefault;
-        params.dirColor = params.colorDefault;
-    }
+    const COLORREF dc_text_color = pDC->GetTextColor();
+    const COLORREF default_text_color =
+        dc_text_color == CLR_INVALID ? (dark_mode ? RGB(255, 255, 255) : RGB(0, 0, 0))
+                                    : dc_text_color;
+    params.colorDefault =
+        g_data.HasLabelTextColor() ? g_data.LabelTextColor() : default_text_color;
+    params.valueColor =
+        g_data.HasValueTextColor() ? g_data.ValueTextColor() : default_text_color;
+    params.dirColor = params.valueColor;
 
     params.showName = g_data.IsDisplayName();
     if (params.showName)
@@ -1072,12 +1069,15 @@ void LStockItem::DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode)
 
     const COLORREF color_red = dark_mode ? RGB(255, 121, 120) : RGB(195, 0, 0);
     const COLORREF color_green = dark_mode ? RGB(111, 215, 149) : RGB(46, 139, 87);
-    if (g_data.IsDisplayColor())
+    const bool use_market_color =
+        g_data.IsDisplayColor() &&
+        (!g_data.HasValueTextColor() || g_data.ValueTextColor() == RGB(255, 255, 255));
+    if (use_market_color)
     {
         const bool isUp = data->GetChangeFluctuation().find('+') != wxString::npos;
         params.valueColor = isUp ? color_red : color_green;
     }
-    if (!params.costDir.IsEmpty() && g_data.IsDisplayColor())
+    if (!params.costDir.IsEmpty() && use_market_color)
     {
         const int dir = data->GetCostProfitDirection();
         if (dir > 0)
